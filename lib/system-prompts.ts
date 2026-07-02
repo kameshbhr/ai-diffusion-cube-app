@@ -16,6 +16,34 @@ export function formatCubeContext(cubeState: CubeStateSummary): string {
   return `## Your prior assessment of this deployment\n\nYou have already assessed this deployment and set the following dimension statuses:\n\n${lines}\n\nRefer to this assessment when the user asks about colors, statuses, or which dimensions have gaps.`;
 }
 
+// Used only for the silent copy-generation call — returns a pathway_copy block and nothing else.
+export function explorePathwayCopySystemPrompt(wikiContent: string): string {
+  return `You are writing short, plain-language display copy for a deployment record — for a card and a summary panel, not for deep reading.
+
+You have access to the following deployment record:
+
+${wikiContent}
+
+Write two pieces of copy:
+
+1. "card" — one or two sentences stating the outcome in plain language: what was built and what it enabled, and for whom. No statistics, percentages, counts, or pipeline/process detail. Start directly with what was done (e.g. "Created…", "Built…") — do not start with "This pathway" or "This deployment".
+
+2. "summary" — two short paragraphs, separated by a blank line:
+   - First paragraph: who this pathway is useful to (what kind of adopter, facing what need) and what the reusable output is. Start with "This pathway is useful to…"
+   - Second paragraph: 2–3 plain-language sentences on what happened — name the deployment and where, and what it enabled. Avoid granular numbers (sample counts, percentages, currency figures, day/week counts) — describe the outcome, not the mechanics.
+
+Base both only on the deployment record above. Never fabricate details that are not in the record.
+
+Your entire response MUST be a single JSON block wrapped exactly like this, with no text before or after it:
+
+<pathway_copy>
+{
+  "card": "...",
+  "summary": "..."
+}
+</pathway_copy>`;
+}
+
 // Used only for the silent init call — returns a cube_update block and nothing else.
 export function exploreInitSystemPrompt(wikiContent: string): string {
   return `You are an analyst reading a deployment record. Your only task is to assess documentation coverage across six dimensions and return a structured result.
@@ -108,7 +136,7 @@ When asked to provide a deployment summary, respond with exactly this structure 
 
 When asked for a snapshot of a specific dimension, respond with:
 - 2–3 sentences describing what is covered in that dimension for this deployment
-- Then end with exactly this line on its own: "Would you like to know about the **learnings** or the **gaps** in this dimension?"
+- Then end with exactly this line on its own: "Do you want to know more about it or something else?"
 
 ## General answering rules
 
@@ -140,7 +168,7 @@ F — Operating Model: what makes it last
 
 Your job is to understand the user's deployment context through conversation, one question at a time. As you learn about each dimension, return a structured cube state update in your response.
 
-Every response that updates the cube must end with a JSON block in this exact format:
+Every response must end with a JSON block in this exact format:
 <cube_update>
 {
   "A": { "status": "green|amber|red|dark", "phrase": "one line summary or empty" },
@@ -148,7 +176,14 @@ Every response that updates the cube must end with a JSON block in this exact fo
   "C": { "status": "green|amber|red|dark", "phrase": "..." },
   "D": { "status": "green|amber|red|dark", "phrase": "..." },
   "E": { "status": "green|amber|red|dark", "phrase": "..." },
-  "F": { "status": "green|amber|red|dark", "phrase": "..." }
+  "F": { "status": "green|amber|red|dark", "phrase": "..." },
+  "meta": {
+    "name": "a short working name for the deployment, or empty string if not yet known",
+    "sector": "sector, or empty string if not yet known",
+    "geography": "geography, or empty string if not yet known",
+    "status": "one of Concept, Pilot, Scaling, Active — or empty string if not yet known",
+    "summary": "2-3 sentence summary of the deployment as understood so far, or empty string if too early to summarise"
+  }
 }
 </cube_update>
 
@@ -159,6 +194,8 @@ Status meanings:
 - red: critical gap or risk identified
 
 Start all faces as dark. Only update a face when you have genuine information about it.
+
+Suggest a short working name for "meta.name" as soon as the user describes what they're building — even before any dimension is fully defined. Update "meta.sector", "meta.geography", "meta.status", and "meta.summary" as you learn more. Leave a field as an empty string until you have genuine information for it, and never overwrite something you already know with a guess or blank it back out.
 
 When surfacing reusable know-how from existing pathways, always name the source deployment.`;
 }

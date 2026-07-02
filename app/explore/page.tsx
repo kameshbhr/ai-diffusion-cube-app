@@ -3,12 +3,32 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Cube3D, { CubeState, FaceState } from '@/components/Cube3D';
 import ChatPanel, { Message } from '@/components/ChatPanel';
+import CubeIcon from '@/components/CubeIcon';
 
 interface Pathway {
   slug: string;
   name: string;
+  description: string;
+}
+
+interface PathwayMeta {
   sector: string;
   geography: string;
+  status: string;
+  summary: string;
+}
+
+const EMPTY_META: PathwayMeta = { sector: '', geography: '', status: '', summary: '' };
+
+interface PathwayCopy {
+  card: string;
+  summary: string;
+}
+
+function parsePathwayCopy(text: string): PathwayCopy | null {
+  const match = text.match(/<pathway_copy>([\s\S]*?)<\/pathway_copy>/);
+  if (!match) return null;
+  try { return JSON.parse(match[1]); } catch { return null; }
 }
 
 const LEGEND = [
@@ -50,29 +70,49 @@ function parseCubeUpdate(text: string): Partial<CubeState> | null {
   try { return JSON.parse(match[1]); } catch { return null; }
 }
 
+// Cuts at the opening tag rather than matching a closed block, so a
+// <cube_update> that has only partially streamed in never renders.
 function stripCubeUpdate(text: string): string {
-  return text.replace(/<cube_update>[\s\S]*?<\/cube_update>/g, '').trim();
+  const idx = text.indexOf('<cube_update');
+  return (idx === -1 ? text : text.slice(0, idx)).trim();
 }
 
-// Parse pathways from index.md lines: - [Name](pathways/slug.md) — Sector — Geography
+// Parse pathways from the index.md "## Pathways" table:
+// | [Name](pathways/slug.md) | Summary text |
 function parsePathways(indexMd: string): Pathway[] {
   const results: Pathway[] = [];
-  const re = /\[([^\]]+)\]\(pathways\/([^)]+)\.md\)(?:[^\n]*?—\s*([^—\n]+))?(?:[^\n]*?—\s*([^\n]+))?/g;
+  const re = /\|\s*\[([^\]]+)\]\(pathways\/([^)]+)\.md\)\s*\|\s*([^|\n]+?)\s*\|/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(indexMd)) !== null) {
     results.push({
       name: m[1].trim(),
       slug: m[2].trim(),
-      sector: m[3]?.trim() ?? '',
-      geography: m[4]?.trim() ?? '',
+      description: m[3].trim(),
     });
   }
   return results;
 }
 
+// Parse a pathway page's metadata header and Summary section.
+function parsePathwayMeta(md: string): PathwayMeta {
+  const grab = (label: string) => {
+    const m = md.match(new RegExp(`\\*\\*${label}:\\*\\*\\s*(.+)`, 'i'));
+    return m ? m[1].trim() : '';
+  };
+  const summaryMatch = md.match(/##\s*Summary\s*\n+([\s\S]*?)(?:\n---|\n##\s)/);
+  return {
+    sector: grab('Sector'),
+    geography: grab('Geography'),
+    status: grab('Deployment status'),
+    summary: summaryMatch ? summaryMatch[1].trim() : '',
+  };
+}
+
 export default function ExplorePage() {
   const [pathways, setPathways] = useState<Pathway[]>([]);
   const [selected, setSelected] = useState<Pathway | null>(null);
+  const [meta, setMeta] = useState<PathwayMeta>(EMPTY_META);
+  const [copyCache, setCopyCache] = useState<Record<string, PathwayCopy>>({});
   const [cubeState, setCubeState] = useState<CubeState>(DARK_CUBE);
   const [messages, setMessages] = useState<Message[]>([]);
   const messagesRef = useRef<Message[]>([]);
@@ -80,14 +120,40 @@ export default function ExplorePage() {
   const isInit = useRef(false);
   const cubeStateRef = useRef<CubeState>(DARK_CUBE);
 
+  // Generates the outcome-first card blurb + panel summary for a pathway via
+  // the model (see explorePathwayCopySystemPrompt) — keeps this working for
+  // any pathway added to the wiki later, with no app changes required.
+  const fetchPathwayCopy = useCallback(async (slug: string) => {
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: 'Produce the card and summary copy for this deployment.' }],
+          mode: 'explore-copy',
+          pathwaySlug: slug,
+        }),
+      });
+      const text = await res.text();
+      const copy = parsePathwayCopy(text);
+      if (copy) setCopyCache((prev) => ({ ...prev, [slug]: copy }));
+    } catch {
+      // ignore — falls back to the raw wiki description/summary
+    }
+  }, []);
+
   // Load pathway list from index
   useEffect(() => {
     const base = process.env.NEXT_PUBLIC_GITHUB_WIKI_BASE_URL ?? '';
     fetch(`${base}/wiki/index.md`)
       .then((r) => r.text())
-      .then((md) => setPathways(parsePathways(md)))
+      .then((md) => {
+        const list = parsePathways(md);
+        setPathways(list);
+        list.forEach((p) => fetchPathwayCopy(p.slug));
+      })
       .catch(() => {});
-  }, []);
+  }, [fetchPathwayCopy]);
 
   const sendMessage = useCallback(
     async (text: string, history: Message[], slug: string, hidden = false, updateCube = false) => {
@@ -156,19 +222,24 @@ export default function ExplorePage() {
 
   async function selectPathway(pathway: Pathway) {
     setSelected(pathway);
+    setMeta(EMPTY_META);
     setCubeState(DARK_CUBE);
     cubeStateRef.current = DARK_CUBE;
     setMessages([]);
     messagesRef.current = [];
     isInit.current = true;
 
+    const base = process.env.NEXT_PUBLIC_GITHUB_WIKI_BASE_URL ?? '';
+    fetch(`${base}/wiki/pathways/${pathway.slug}.md`)
+      .then((r) => r.text())
+      .then((md) => setMeta(parsePathwayMeta(md)))
+      .catch(() => {});
+
+    if (!copyCache[pathway.slug]) fetchPathwayCopy(pathway.slug);
+
     const initPrompt = `Analyse the deployment "${pathway.name}" across all six dimensions (A–F) using only the wiki content provided. Set a status for each (green/amber/red/dark) and write a phrase of 5 words or fewer naming the key gap or strength. Your entire response must be a single <cube_update> block with no other text before or after it.`;
     await sendMessage(initPrompt, [], pathway.slug, true, true);
     isInit.current = false;
-
-    // After cube loads, show deployment summary in chat
-    const summaryPrompt = `Provide a deployment summary for "${pathway.name}".`;
-    await sendMessage(summaryPrompt, messagesRef.current, pathway.slug, false, false);
   }
 
   function handleFaceClick(code: string) {
@@ -189,10 +260,13 @@ export default function ExplorePage() {
   return (
     <div className="flex h-screen bg-[#F5EFE6] text-[#2C1A0E] overflow-hidden">
       {/* Left panel — pathway list */}
-      <aside className="w-[40%] border-r border-[#7A5C44]/20 flex flex-col">
+      <aside className="w-[30%] border-r border-[#7A5C44]/20 flex flex-col">
         <div className="p-4 border-b border-[#7A5C44]/20 flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-semibold">AI Diffusion Cube</h1>
+            <div className="flex items-center gap-2">
+              <CubeIcon size={18} />
+              <h1 className="text-lg font-semibold leading-none">AI Diffusion Cube</h1>
+            </div>
             <p className="text-[#7A5C44] text-xs mt-1">Explore existing deployments</p>
           </div>
           <a href="/" className="text-xs text-[#7A5C44] hover:text-[#2C1A0E] border border-[#7A5C44]/30 rounded-lg px-3 py-1.5 transition-colors">
@@ -214,9 +288,9 @@ export default function ExplorePage() {
               }`}
             >
               <div className="font-medium text-sm">{p.name}</div>
-              {(p.sector || p.geography) && (
-                <div className={`text-xs mt-1 ${selected?.slug === p.slug ? 'text-[#C4A882]' : 'text-[#7A5C44]'}`}>
-                  {[p.sector, p.geography].filter(Boolean).join(' · ')}
+              {(copyCache[p.slug]?.card ?? p.description) && (
+                <div className={`text-xs mt-1 leading-relaxed ${selected?.slug === p.slug ? 'text-[#C4A882]' : 'text-[#7A5C44]'}`}>
+                  {copyCache[p.slug]?.card ?? p.description}
                 </div>
               )}
             </button>
@@ -232,29 +306,37 @@ export default function ExplorePage() {
           </div>
         ) : (
           <>
-            {/* Cube */}
-            <div className="h-[50%] border-b border-[#7A5C44]/20 flex flex-col">
-              <div className="flex items-center justify-between px-4 pt-4 pb-1">
-                <div className="flex items-center gap-3">
-                  <span className="text-lg font-bold text-[#2C1A0E]">{selected.name}</span>
-                  {loading && isInit.current && (
-                    <span className="text-xs text-[#E8A838] animate-pulse">Analysing deployment…</span>
-                  )}
+            {/* Deployment info — full width */}
+            <div className="h-[25%] border-b border-[#7A5C44]/20 overflow-y-auto p-4">
+              <div className="flex items-center gap-3">
+                <h2 className="text-lg font-bold text-[#2C1A0E]">{selected.name}</h2>
+                {loading && isInit.current && (
+                  <span className="text-xs text-[#E8A838] animate-pulse">Analysing deployment…</span>
+                )}
+              </div>
+              <p className="text-xs text-[#7A5C44] mt-1">
+                {[meta.sector, meta.geography, meta.status].filter(Boolean).join(' · ')}
+              </p>
+              <p className="text-sm text-[#2C1A0E] mt-2 leading-relaxed whitespace-pre-line">
+                {copyCache[selected.slug]?.summary || meta.summary || 'Loading summary…'}
+              </p>
+            </div>
+            {/* Chat + cube */}
+            <div className="h-[75%] flex overflow-hidden">
+              <div className="flex-1 min-w-0">
+                <ChatPanel
+                  messages={messages}
+                  onSend={handleUserSend}
+                  loading={loading}
+                  placeholder="Ask about this deployment…"
+                />
+              </div>
+              <div className="w-[190px] flex-shrink-0 border-l border-[#7A5C44]/20 flex flex-col items-center justify-center gap-3 p-3">
+                <div style={{ width: 160, height: 160 }}>
+                  <Cube3D cubeState={cubeState} onFaceClick={handleFaceClick} size={120} />
                 </div>
                 <CubeLegend />
               </div>
-              <div className="flex-1">
-                <Cube3D cubeState={cubeState} onFaceClick={handleFaceClick} />
-              </div>
-            </div>
-            {/* Chat */}
-            <div className="h-[50%]">
-              <ChatPanel
-                messages={messages}
-                onSend={handleUserSend}
-                loading={loading}
-                placeholder="Ask about this deployment…"
-              />
             </div>
           </>
         )}

@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { loadWikiContext } from '@/lib/wiki-loader';
-import { exploreSystemPrompt, exploreInitSystemPrompt, designSystemPrompt } from '@/lib/system-prompts';
+import { exploreSystemPrompt, exploreInitSystemPrompt, explorePathwayCopySystemPrompt, designSystemPrompt } from '@/lib/system-prompts';
 import { logConversation } from '@/lib/logger';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -12,6 +12,7 @@ export async function POST(req: Request) {
   let systemPrompt: string;
   if (mode === 'design') systemPrompt = designSystemPrompt(wikiContent);
   else if (mode === 'explore-init') systemPrompt = exploreInitSystemPrompt(wikiContent);
+  else if (mode === 'explore-copy') systemPrompt = explorePathwayCopySystemPrompt(wikiContent);
   else systemPrompt = exploreSystemPrompt(wikiContent, cubeState ?? undefined);
 
   const stream = await anthropic.messages.stream({

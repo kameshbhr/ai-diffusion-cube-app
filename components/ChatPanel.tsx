@@ -7,6 +7,16 @@ export interface Message {
   content: string;
 }
 
+// Renders **bold** spans; everything else is shown as plain text.
+function renderInlineMarkdown(text: string): React.ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) =>
+    part.startsWith('**') && part.endsWith('**')
+      ? <strong key={i}>{part.slice(2, -2)}</strong>
+      : part
+  );
+}
+
 interface Props {
   messages: Message[];
   onSend: (text: string) => void;
@@ -51,7 +61,7 @@ export default function ChatPanel({ messages, onSend, loading, placeholder }: Pr
                   : 'bg-white text-[#2C1A0E] border border-[#7A5C44]/20'
               }`}
             >
-              {m.content}
+              {renderInlineMarkdown(m.content)}
             </div>
           </div>
         ))}

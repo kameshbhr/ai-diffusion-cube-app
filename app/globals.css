@@ -24,3 +24,13 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@theme {
+  --animate-cube-icon-spin: cube-icon-spin 3.2s ease-out forwards;
+}
+
+@keyframes cube-icon-spin {
+  0% { transform: rotateX(0deg) rotateY(0deg); }
+  70% { transform: rotateX(-380deg) rotateY(750deg); }
+  100% { transform: rotateX(-20deg) rotateY(30deg); }
+}

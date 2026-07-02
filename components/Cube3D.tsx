@@ -27,22 +27,26 @@ const STATUS_COLORS: Record<FaceStatus, string> = {
   red: '#D64045',
 };
 
-// Six faces: front, back, right, left, top, bottom
-const FACE_TRANSFORMS = [
-  'rotateY(0deg) translateZ(110px)',
-  'rotateY(180deg) translateZ(110px)',
-  'rotateY(90deg) translateZ(110px)',
-  'rotateY(-90deg) translateZ(110px)',
-  'rotateX(90deg) translateZ(110px)',
-  'rotateX(-90deg) translateZ(110px)',
-];
-
 interface Props {
   cubeState: CubeState;
   onFaceClick: (code: string) => void;
+  size?: number;
 }
 
-export default function Cube3D({ cubeState, onFaceClick }: Props) {
+export default function Cube3D({ cubeState, onFaceClick, size = 220 }: Props) {
+  const half = size / 2;
+  const nameFontSize = Math.max(8, Math.min(13, size * 0.11));
+  const phraseFontSize = Math.max(7, Math.min(11, size * 0.09));
+  const facePadding = Math.max(4, Math.min(12, size * 0.06));
+  // Six faces: front, back, right, left, top, bottom
+  const faceTransforms = [
+    `rotateY(0deg) translateZ(${half}px)`,
+    `rotateY(180deg) translateZ(${half}px)`,
+    `rotateY(90deg) translateZ(${half}px)`,
+    `rotateY(-90deg) translateZ(${half}px)`,
+    `rotateX(90deg) translateZ(${half}px)`,
+    `rotateX(-90deg) translateZ(${half}px)`,
+  ];
   const [rotX, setRotX] = useState(-20);
   const [rotY, setRotY] = useState(30);
   const dragging = useRef(false);
@@ -76,7 +80,7 @@ export default function Cube3D({ cubeState, onFaceClick }: Props) {
   return (
     <div
       className="flex items-center justify-center w-full h-full select-none"
-      style={{ perspective: '800px' }}
+      style={{ perspective: size * 4 }}
       onMouseDown={onMouseDown}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
@@ -84,8 +88,8 @@ export default function Cube3D({ cubeState, onFaceClick }: Props) {
     >
       <div
         style={{
-          width: 220,
-          height: 220,
+          width: size,
+          height: size,
           position: 'relative',
           transformStyle: 'preserve-3d',
           transform: `rotateX(${rotX}deg) rotateY(${rotY}deg)`,
@@ -101,10 +105,10 @@ export default function Cube3D({ cubeState, onFaceClick }: Props) {
               onClick={() => { if (!moved.current) onFaceClick(dim.code); }}
               style={{
                 position: 'absolute',
-                width: 220,
-                height: 220,
+                width: size,
+                height: size,
                 background: bg,
-                transform: FACE_TRANSFORMS[i],
+                transform: faceTransforms[i],
                 backfaceVisibility: 'hidden',
                 border: '1px solid rgba(255,255,255,0.15)',
                 borderRadius: 8,
@@ -113,17 +117,17 @@ export default function Cube3D({ cubeState, onFaceClick }: Props) {
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
-                padding: 12,
+                padding: facePadding,
                 boxSizing: 'border-box',
                 color: '#fff',
                 textAlign: 'center',
               }}
             >
-              <span style={{ fontSize: 13, fontWeight: 700, opacity: 0.95, lineHeight: 1.2, textAlign: 'center' }}>
+              <span style={{ fontSize: nameFontSize, fontWeight: 700, opacity: 0.95, lineHeight: 1.2, textAlign: 'center' }}>
                 {dim.name}
               </span>
               {face.phrase && (
-                <span style={{ fontSize: 11, marginTop: 8, opacity: 0.75, lineHeight: 1.3, textAlign: 'center' }}>
+                <span style={{ fontSize: phraseFontSize, marginTop: 6, opacity: 0.75, lineHeight: 1.3, textAlign: 'center' }}>
                   {face.phrase}
                 </span>
               )}
