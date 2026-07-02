@@ -6,11 +6,11 @@ import { logConversation } from '@/lib/logger';
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export async function POST(req: Request) {
-  const { messages, mode, pathwaySlug, cubeState } = await req.json();
+  const { messages, mode, pathwaySlug, cubeState, documentUpload, typedIntro } = await req.json();
 
   const wikiContent = await loadWikiContext(pathwaySlug);
   let systemPrompt: string;
-  if (mode === 'design') systemPrompt = designSystemPrompt(wikiContent);
+  if (mode === 'design') systemPrompt = designSystemPrompt(wikiContent, { documentUpload, typedIntro });
   else if (mode === 'explore-init') systemPrompt = exploreInitSystemPrompt(wikiContent);
   else if (mode === 'explore-copy') systemPrompt = explorePathwayCopySystemPrompt(wikiContent);
   else systemPrompt = exploreSystemPrompt(wikiContent, cubeState ?? undefined);

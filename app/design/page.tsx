@@ -2,9 +2,10 @@
 
 import { useCallback, useRef, useState } from 'react';
 import Cube3D, { CubeState, FaceState } from '@/components/Cube3D';
-import ChatPanel, { Message } from '@/components/ChatPanel';
+import ChatPanel, { Message, UploadStatus } from '@/components/ChatPanel';
 import DimensionPanel from '@/components/DimensionPanel';
 import CubeIcon from '@/components/CubeIcon';
+import { extractTextFromFile, getFileExtension } from '@/lib/extract-text';
 
 interface DesignMeta {
   name: string;
@@ -19,12 +20,18 @@ interface Design {
   meta: DesignMeta;
   cubeState: CubeState;
   messages: Message[];
+  // Counts down the follow-up turns (confirm/correct, then guidance-vs-needs)
+  // that must still carry the document-review instruction after an upload.
+  documentReviewTurnsLeft: number;
+  // Counts down the one follow-up turn (guidance-vs-needs) that must still
+  // carry the typed-intro instruction after the user's first typed message.
+  typedIntroTurnsLeft: number;
 }
 
 const EMPTY_META: DesignMeta = { name: '', sector: '', geography: '', status: '', summary: '' };
 
 const INITIAL_MESSAGE =
-  "Hi! I'm here to help you design your AI deployment. Can you provide a brief on what you are trying to do? What problem are you trying to solve, and who are the intended users?";
+  "Hi! I'm here to help you design your AI deployment across six dimensions — from problem framing to operating model.\n\nYou can start in two ways:\n📄 Upload a document — a concept note, proposal, or anything describing what you're building. I'll read it and get us started.\n💬 Just tell me — describe what you're trying to do, the problem you're solving, and who it's for.";
 
 const LEGEND = [
   { color: '#3D8B37', label: 'Well defined' },
@@ -79,6 +86,7 @@ export default function DesignPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeFace, setActiveFace] = useState<string | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<Record<string, UploadStatus>>({});
   const nextId = useRef(1);
 
   const selected = designs.find((d) => d.id === selectedId) ?? null;
@@ -94,6 +102,8 @@ export default function DesignPage() {
       meta: EMPTY_META,
       cubeState: DARK_CUBE,
       messages: [{ role: 'assistant', content: INITIAL_MESSAGE }],
+      documentReviewTurnsLeft: 0,
+      typedIntroTurnsLeft: 0,
     };
     setDesigns((prev) => [...prev, newDesign]);
     setSelectedId(id);
@@ -106,15 +116,20 @@ export default function DesignPage() {
   }
 
   const sendMessage = useCallback(
-    async (id: string, text: string, history: Message[]) => {
-      const next: Message[] = [...history, { role: 'user', content: text }];
+    async (id: string, history: Message[], userMessage: Message, opts?: { documentUpload?: boolean; typedIntro?: boolean }) => {
+      const next: Message[] = [...history, userMessage];
       updateDesign(id, (d) => ({ ...d, messages: next }));
       setLoading(true);
 
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: next, mode: 'design' }),
+        body: JSON.stringify({
+          messages: next.map(({ role, content }) => ({ role, content })),
+          mode: 'design',
+          documentUpload: opts?.documentUpload,
+          typedIntro: opts?.typedIntro,
+        }),
       });
 
       if (!res.body) { setLoading(false); return; }
@@ -165,7 +180,68 @@ export default function DesignPage() {
 
   function handleUserSend(text: string) {
     if (!selected) return;
-    sendMessage(selected.id, text, selected.messages);
+    const continuesDocReview = selected.documentReviewTurnsLeft > 0;
+    const continuesTypedIntro = !continuesDocReview && selected.typedIntroTurnsLeft > 0;
+    // The very first message of a design (right after the greeting) starts the
+    // typed-intro sequence, unless a document upload already claimed that role.
+    const startsTypedIntro = !continuesDocReview && !continuesTypedIntro && selected.messages.length === 1;
+
+    if (continuesDocReview) {
+      updateDesign(selected.id, (d) => ({ ...d, documentReviewTurnsLeft: d.documentReviewTurnsLeft - 1 }));
+    } else if (continuesTypedIntro) {
+      updateDesign(selected.id, (d) => ({ ...d, typedIntroTurnsLeft: d.typedIntroTurnsLeft - 1 }));
+    } else if (startsTypedIntro) {
+      updateDesign(selected.id, (d) => ({ ...d, typedIntroTurnsLeft: 1 }));
+    }
+
+    sendMessage(
+      selected.id,
+      selected.messages,
+      { role: 'user', content: text },
+      { documentUpload: continuesDocReview, typedIntro: continuesTypedIntro || startsTypedIntro }
+    );
+  }
+
+  async function handleUploadFile(file: File) {
+    if (!selected) return;
+    const id = selected.id;
+
+    if (!getFileExtension(file.name)) {
+      setUploadStatus((s) => ({ ...s, [id]: { state: 'error', error: 'Unsupported file type — use .pdf, .txt, or .md.' } }));
+      return;
+    }
+
+    setUploadStatus((s) => ({ ...s, [id]: { state: 'reading', fileName: file.name } }));
+
+    let text: string;
+    try {
+      text = await extractTextFromFile(file);
+    } catch {
+      setUploadStatus((s) => ({ ...s, [id]: { state: 'error', error: `Could not read ${file.name}. Try a different file.` } }));
+      return;
+    }
+
+    if (!text) {
+      setUploadStatus((s) => ({ ...s, [id]: { state: 'error', error: 'No readable text found — it may be a scanned/image PDF.' } }));
+      return;
+    }
+
+    setUploadStatus((s) => {
+      const next = { ...s };
+      delete next[id];
+      return next;
+    });
+
+    // This upload consumes turn 1 (summary + confirm); 2 more turns
+    // (reusable know-how, then gaps) still need the instruction.
+    updateDesign(id, (d) => ({ ...d, documentReviewTurnsLeft: 2 }));
+
+    sendMessage(
+      id,
+      selected.messages,
+      { role: 'user', content: text, displayContent: `📄 Uploaded **${file.name}**` },
+      { documentUpload: true }
+    );
   }
 
   function handleFaceClick(code: string) {
@@ -261,6 +337,8 @@ export default function DesignPage() {
                 <ChatPanel
                   messages={selected.messages}
                   onSend={handleUserSend}
+                  onUploadFile={handleUploadFile}
+                  uploadStatus={uploadStatus[selected.id] ?? null}
                   loading={loading}
                   placeholder="Describe your deployment context…"
                 />

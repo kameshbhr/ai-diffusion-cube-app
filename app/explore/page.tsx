@@ -123,7 +123,7 @@ export default function ExplorePage() {
   // Generates the outcome-first card blurb + panel summary for a pathway via
   // the model (see explorePathwayCopySystemPrompt) — keeps this working for
   // any pathway added to the wiki later, with no app changes required.
-  const fetchPathwayCopy = useCallback(async (slug: string) => {
+  const fetchPathwayCopy = useCallback(async (slug: string): Promise<PathwayCopy | null> => {
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -137,8 +137,10 @@ export default function ExplorePage() {
       const text = await res.text();
       const copy = parsePathwayCopy(text);
       if (copy) setCopyCache((prev) => ({ ...prev, [slug]: copy }));
+      return copy;
     } catch {
       // ignore — falls back to the raw wiki description/summary
+      return null;
     }
   }, []);
 
@@ -235,11 +237,22 @@ export default function ExplorePage() {
       .then((md) => setMeta(parsePathwayMeta(md)))
       .catch(() => {});
 
-    if (!copyCache[pathway.slug]) fetchPathwayCopy(pathway.slug);
+    const copyPromise = copyCache[pathway.slug]
+      ? Promise.resolve<PathwayCopy | null>(copyCache[pathway.slug])
+      : fetchPathwayCopy(pathway.slug);
 
     const initPrompt = `Analyse the deployment "${pathway.name}" across all six dimensions (A–F) using only the wiki content provided. Set a status for each (green/amber/red/dark) and write a phrase of 5 words or fewer naming the key gap or strength. Your entire response must be a single <cube_update> block with no other text before or after it.`;
-    await sendMessage(initPrompt, [], pathway.slug, true, true);
+    const [copy] = await Promise.all([copyPromise, sendMessage(initPrompt, [], pathway.slug, true, true)]);
     isInit.current = false;
+
+    const oneLinerRaw = (copy?.card ?? pathway.description).trim();
+    const oneLiner = /[.!?]$/.test(oneLinerRaw) ? oneLinerRaw : `${oneLinerRaw}.`;
+    const greeting: Message = {
+      role: 'assistant',
+      content: `Hello! I'm the AI Diffusion Cube agent. I can help you explore **${pathway.name}** — ${oneLiner} What would you like to know?`,
+    };
+    setMessages([greeting]);
+    messagesRef.current = [greeting];
   }
 
   function handleFaceClick(code: string) {

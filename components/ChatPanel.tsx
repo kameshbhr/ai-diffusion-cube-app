@@ -5,6 +5,15 @@ import { useEffect, useRef, useState } from 'react';
 export interface Message {
   role: 'user' | 'assistant';
   content: string;
+  // Shown in the chat bubble instead of `content` — used for uploads, where
+  // `content` carries the full extracted document text sent to the agent.
+  displayContent?: string;
+}
+
+export interface UploadStatus {
+  state: 'reading' | 'error';
+  fileName?: string;
+  error?: string;
 }
 
 // Renders **bold** spans; everything else is shown as plain text.
@@ -20,13 +29,16 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
 interface Props {
   messages: Message[];
   onSend: (text: string) => void;
+  onUploadFile?: (file: File) => void;
+  uploadStatus?: UploadStatus | null;
   loading: boolean;
   placeholder?: string;
 }
 
-export default function ChatPanel({ messages, onSend, loading, placeholder }: Props) {
+export default function ChatPanel({ messages, onSend, onUploadFile, uploadStatus, loading, placeholder }: Props) {
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -46,6 +58,14 @@ export default function ChatPanel({ messages, onSend, loading, placeholder }: Pr
     }
   }
 
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) onUploadFile?.(file);
+  }
+
+  const uploadDisabled = loading || uploadStatus?.state === 'reading';
+
   return (
     <div className="flex flex-col h-full bg-[#F5EFE6]">
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -61,7 +81,7 @@ export default function ChatPanel({ messages, onSend, loading, placeholder }: Pr
                   : 'bg-white text-[#2C1A0E] border border-[#7A5C44]/20'
               }`}
             >
-              {renderInlineMarkdown(m.content)}
+              {renderInlineMarkdown(m.displayContent ?? m.content)}
             </div>
           </div>
         ))}
@@ -75,7 +95,33 @@ export default function ChatPanel({ messages, onSend, loading, placeholder }: Pr
         <div ref={bottomRef} />
       </div>
 
-      <div className="border-t border-[#7A5C44]/20 p-3 flex gap-2">
+      <div className="border-t border-[#7A5C44]/20 p-3">
+        {onUploadFile && (
+          <div className="flex items-center gap-2 mb-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.txt,.md"
+              className="hidden"
+              onChange={handleFileChange}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadDisabled}
+              className="flex items-center gap-1 text-xs text-[#7A5C44] hover:text-[#2C1A0E] disabled:opacity-40 transition-colors"
+            >
+              📎 Upload document
+            </button>
+            {uploadStatus?.state === 'reading' && (
+              <span className="text-xs text-[#7A5C44] animate-pulse">Reading {uploadStatus.fileName}…</span>
+            )}
+            {uploadStatus?.state === 'error' && (
+              <span className="text-xs text-red-600">{uploadStatus.error}</span>
+            )}
+          </div>
+        )}
+        <div className="flex gap-2">
         <textarea
           className="flex-1 bg-white text-[#2C1A0E] border border-[#7A5C44]/30 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:border-[#E8A838] placeholder-[#7A5C44]"
           rows={2}
@@ -92,6 +138,7 @@ export default function ChatPanel({ messages, onSend, loading, placeholder }: Pr
         >
           Send
         </button>
+        </div>
       </div>
     </div>
   );
