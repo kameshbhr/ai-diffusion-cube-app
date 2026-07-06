@@ -1,11 +1,13 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Cube3D, { CubeState, FaceState } from '@/components/Cube3D';
 import ChatPanel, { Message, UploadStatus } from '@/components/ChatPanel';
 import DimensionPanel from '@/components/DimensionPanel';
 import CubeIcon from '@/components/CubeIcon';
+import SignOutButton from '@/components/SignOutButton';
 import { extractTextFromFile, getFileExtension } from '@/lib/extract-text';
+import { createClient } from '@/lib/supabase/client';
 
 interface DesignMeta {
   name: string;
@@ -57,6 +59,27 @@ const DARK_CUBE: CubeState = Object.fromEntries(
   ['A', 'B', 'C', 'D', 'E', 'F'].map((c) => [c, { status: 'dark', phrase: '' } as FaceState])
 );
 
+// Shape of a row in the `designs` table (see supabase/migrations/0001_designs.sql).
+interface DesignRow {
+  id: string;
+  meta: DesignMeta;
+  cube_state: CubeState;
+  messages: Message[];
+  document_review_turns_left: number;
+  typed_intro_turns_left: number;
+}
+
+function rowToDesign(row: DesignRow): Design {
+  return {
+    id: row.id,
+    meta: row.meta ?? EMPTY_META,
+    cubeState: row.cube_state ?? DARK_CUBE,
+    messages: row.messages ?? [],
+    documentReviewTurnsLeft: row.document_review_turns_left ?? 0,
+    typedIntroTurnsLeft: row.typed_intro_turns_left ?? 0,
+  };
+}
+
 interface ParsedCubeUpdate {
   cube: Record<string, FaceState>;
   meta?: Partial<DesignMeta>;
@@ -83,30 +106,95 @@ function stripCubeUpdate(text: string): string {
 
 export default function DesignPage() {
   const [designs, setDesigns] = useState<Design[]>([]);
+  const [designsLoaded, setDesignsLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeFace, setActiveFace] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<Record<string, UploadStatus>>({});
-  const nextId = useRef(1);
+  const designsRef = useRef<Design[]>([]);
 
   const selected = designs.find((d) => d.id === selectedId) ?? null;
 
+  // Keeps designsRef in sync synchronously so async code (the streaming loop
+  // in sendMessage) can read the latest state without a stale closure.
   const updateDesign = useCallback((id: string, updater: (d: Design) => Design) => {
-    setDesigns((prev) => prev.map((d) => (d.id === id ? updater(d) : d)));
+    setDesigns((prev) => {
+      const next = prev.map((d) => (d.id === id ? updater(d) : d));
+      designsRef.current = next;
+      return next;
+    });
   }, []);
 
-  function createNew() {
-    const id = `design-${nextId.current++}`;
-    const newDesign: Design = {
-      id,
-      meta: EMPTY_META,
-      cubeState: DARK_CUBE,
-      messages: [{ role: 'assistant', content: INITIAL_MESSAGE }],
-      documentReviewTurnsLeft: 0,
-      typedIntroTurnsLeft: 0,
+  // Load this user's saved designs once on mount — RLS scopes the query to
+  // the authenticated user, so no explicit user_id filter is needed here.
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from('designs')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (cancelled) return;
+      if (error) {
+        setLoadError('Could not load your saved deployments.');
+        setDesignsLoaded(true);
+        return;
+      }
+
+      const loaded = (data as DesignRow[]).map(rowToDesign);
+      designsRef.current = loaded;
+      setDesigns(loaded);
+      setDesignsLoaded(true);
+    }
+    load();
+    return () => {
+      cancelled = true;
     };
-    setDesigns((prev) => [...prev, newDesign]);
-    setSelectedId(id);
+  }, []);
+
+  async function persistDesign(design: Design) {
+    const supabase = createClient();
+    await supabase
+      .from('designs')
+      .update({
+        meta: design.meta,
+        cube_state: design.cubeState,
+        messages: design.messages,
+        document_review_turns_left: design.documentReviewTurnsLeft,
+        typed_intro_turns_left: design.typedIntroTurnsLeft,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', design.id);
+  }
+
+  async function createNew() {
+    setLoadError(null);
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from('designs')
+      .insert({
+        meta: EMPTY_META,
+        cube_state: DARK_CUBE,
+        messages: [{ role: 'assistant', content: INITIAL_MESSAGE }],
+      })
+      .select()
+      .single();
+
+    if (error || !data) {
+      setLoadError('Could not create a new deployment. Try again.');
+      return;
+    }
+
+    const newDesign = rowToDesign(data as DesignRow);
+    setDesigns((prev) => {
+      const next = [...prev, newDesign];
+      designsRef.current = next;
+      return next;
+    });
+    setSelectedId(newDesign.id);
     setActiveFace(null);
   }
 
@@ -174,6 +262,9 @@ export default function DesignPage() {
       }
 
       setLoading(false);
+
+      const finalDesign = designsRef.current.find((d) => d.id === id);
+      if (finalDesign) void persistDesign(finalDesign);
     },
     [updateDesign]
   );
@@ -260,14 +351,22 @@ export default function DesignPage() {
             </div>
             <p className="text-[#7A5C44] text-xs mt-1">Design your deployment</p>
           </div>
-          <a href="/" className="text-xs text-[#7A5C44] hover:text-[#2C1A0E] border border-[#7A5C44]/30 rounded-lg px-3 py-1.5 transition-colors">
-            ← Back
-          </a>
+          <div className="flex items-center gap-2">
+            <a href="/" className="text-xs text-[#7A5C44] hover:text-[#2C1A0E] border border-[#7A5C44]/30 rounded-lg px-3 py-1.5 transition-colors">
+              ← Back
+            </a>
+            <SignOutButton />
+          </div>
         </div>
 
-        {designs.length === 0 ? (
+        {!designsLoaded ? (
+          <div className="flex-1 flex items-center justify-center">
+            <p className="text-[#7A5C44] text-sm">Loading your deployments…</p>
+          </div>
+        ) : designs.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6 text-center">
             <p className="text-[#7A5C44] text-sm">You haven&apos;t started designing a deployment yet.</p>
+            {loadError && <p className="text-[#D64045] text-xs">{loadError}</p>}
             <button
               onClick={createNew}
               className="px-6 py-3 bg-[#2C1A0E] hover:bg-[#3a2414] text-white rounded-xl text-sm font-medium transition-colors"
@@ -298,6 +397,7 @@ export default function DesignPage() {
               ))}
             </div>
             <div className="p-4 border-t border-[#7A5C44]/20">
+              {loadError && <p className="text-[#D64045] text-xs mb-2">{loadError}</p>}
               <button
                 onClick={createNew}
                 className="w-full px-4 py-2 border border-[#7A5C44]/30 hover:border-[#7A5C44]/60 text-[#2C1A0E] rounded-lg text-sm font-medium transition-colors"

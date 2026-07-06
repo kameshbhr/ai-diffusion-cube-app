@@ -1,9 +1,13 @@
 import Link from 'next/link';
 import CubeIcon from '@/components/CubeIcon';
+import SignOutButton from '@/components/SignOutButton';
 
 export default function Home() {
   return (
-    <main className="min-h-screen bg-[#F5EFE6] flex flex-col items-center justify-center px-6">
+    <main className="relative min-h-screen bg-[#F5EFE6] flex flex-col items-center justify-center px-6">
+      <div className="absolute top-4 right-4">
+        <SignOutButton />
+      </div>
       <div className="flex items-center gap-3 mb-3">
         <CubeIcon size={40} />
         <h1 className="text-4xl font-bold text-[#2C1A0E] tracking-tight">

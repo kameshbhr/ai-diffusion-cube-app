@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import Cube3D, { CubeState, FaceState } from '@/components/Cube3D';
 import ChatPanel, { Message } from '@/components/ChatPanel';
 import CubeIcon from '@/components/CubeIcon';
+import SignOutButton from '@/components/SignOutButton';
 
 interface Pathway {
   slug: string;
@@ -282,9 +283,12 @@ export default function ExplorePage() {
             </div>
             <p className="text-[#7A5C44] text-xs mt-1">Explore existing deployments</p>
           </div>
-          <a href="/" className="text-xs text-[#7A5C44] hover:text-[#2C1A0E] border border-[#7A5C44]/30 rounded-lg px-3 py-1.5 transition-colors">
-            ← Back
-          </a>
+          <div className="flex items-center gap-2">
+            <a href="/" className="text-xs text-[#7A5C44] hover:text-[#2C1A0E] border border-[#7A5C44]/30 rounded-lg px-3 py-1.5 transition-colors">
+              ← Back
+            </a>
+            <SignOutButton />
+          </div>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {pathways.length === 0 && (
