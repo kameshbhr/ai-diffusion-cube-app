@@ -250,7 +250,7 @@ export default function ExplorePage() {
     const oneLiner = /[.!?]$/.test(oneLinerRaw) ? oneLinerRaw : `${oneLinerRaw}.`;
     const greeting: Message = {
       role: 'assistant',
-      content: `Hello! I'm the AI Diffusion Cube agent. I can help you explore **${pathway.name}** — ${oneLiner} What would you like to know?`,
+      content: `Hi, I'm Jude. I can help you explore **${pathway.name}** — ${oneLiner} What would you like to know?`,
     };
     setMessages([greeting]);
     messagesRef.current = [greeting];
@@ -279,7 +279,7 @@ export default function ExplorePage() {
           <div>
             <div className="flex items-center gap-2">
               <CubeIcon size={18} />
-              <h1 className="text-lg font-semibold leading-none">AI Diffusion Cube</h1>
+              <h1 className="text-lg font-semibold leading-none">People+Possibilities Diffusion Lab</h1>
             </div>
             <p className="text-[#7A5C44] text-xs mt-1">Explore existing deployments</p>
           </div>

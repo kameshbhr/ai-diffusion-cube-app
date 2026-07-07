@@ -11,7 +11,7 @@ export default function Home() {
       <div className="flex items-center gap-3 mb-3">
         <CubeIcon size={40} />
         <h1 className="text-4xl font-bold text-[#2C1A0E] tracking-tight">
-          AI Diffusion Cube
+          People+Possibilities Diffusion Lab
         </h1>
       </div>
       <p className="text-[#7A5C44] text-lg mb-12 text-center max-w-md">

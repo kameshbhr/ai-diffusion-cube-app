@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AI Diffusion Cube",
+  title: "People+Possibilities Diffusion Lab",
   description: "Map, explore, and design AI deployment pathways across six dimensions.",
 };
 

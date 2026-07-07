@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Cube3D, { CubeState, FaceState } from '@/components/Cube3D';
-import ChatPanel, { Message, UploadStatus } from '@/components/ChatPanel';
+import ChatPanel, { Message, PendingAttachment } from '@/components/ChatPanel';
 import DimensionPanel from '@/components/DimensionPanel';
 import CubeIcon from '@/components/CubeIcon';
 import SignOutButton from '@/components/SignOutButton';
-import { extractTextFromFile, getFileExtension } from '@/lib/extract-text';
+import { extractTextFromFile, fileToImageBlock, getFileExtension, isImageFile } from '@/lib/extract-text';
 import { createClient } from '@/lib/supabase/client';
 
 interface DesignMeta {
@@ -30,10 +30,18 @@ interface Design {
   typedIntroTurnsLeft: number;
 }
 
+// A staged attachment carries its extracted payload once processed, so it can
+// be folded into the actual API message once the user presses Enter.
+interface StagedAttachment extends PendingAttachment {
+  kind?: 'image' | 'text';
+  text?: string;
+  image?: { mediaType: string; base64: string };
+}
+
 const EMPTY_META: DesignMeta = { name: '', sector: '', geography: '', status: '', summary: '' };
 
 const INITIAL_MESSAGE =
-  "Hi! I'm here to help you design your AI deployment across six dimensions — from problem framing to operating model.\n\nYou can start in two ways:\n📄 Upload a document — a concept note, proposal, or anything describing what you're building. I'll read it and get us started.\n💬 Just tell me — describe what you're trying to do, the problem you're solving, and who it's for.";
+  "Hi, I'm Jude. I'm here to help you design your AI deployment across six dimensions — from problem framing to operating model.\n\nYou can start in two ways:\n📄 Upload a document or image — a concept note, proposal, slide deck, spreadsheet, or a photo of one. I'll read it and get us started.\n💬 Just tell me — describe what you're trying to do, the problem you're solving, and who it's for.";
 
 const LEGEND = [
   { color: '#3D8B37', label: 'Well defined' },
@@ -111,7 +119,7 @@ export default function DesignPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeFace, setActiveFace] = useState<string | null>(null);
-  const [uploadStatus, setUploadStatus] = useState<Record<string, UploadStatus>>({});
+  const [pendingAttachments, setPendingAttachments] = useState<Record<string, StagedAttachment[]>>({});
   const designsRef = useRef<Design[]>([]);
 
   const selected = designs.find((d) => d.id === selectedId) ?? null;
@@ -213,7 +221,19 @@ export default function DesignPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: next.map(({ role, content }) => ({ role, content })),
+          messages: next.map(({ role, content, images }) => ({
+            role,
+            content:
+              images && images.length > 0
+                ? [
+                    { type: 'text', text: content },
+                    ...images.map((img) => ({
+                      type: 'image',
+                      source: { type: 'base64', media_type: img.mediaType, data: img.base64 },
+                    })),
+                  ]
+                : content,
+          })),
           mode: 'design',
           documentUpload: opts?.documentUpload,
           typedIntro: opts?.typedIntro,
@@ -271,6 +291,39 @@ export default function DesignPage() {
 
   function handleUserSend(text: string) {
     if (!selected) return;
+    const id = selected.id;
+    const attachments = pendingAttachments[id] ?? [];
+    const readyAttachments = attachments.filter((a) => a.state === 'ready');
+
+    // Attaching a file always starts a fresh document-review sequence for
+    // this turn, same as a bare upload used to — regardless of any typed-intro
+    // sequencing already in progress.
+    if (readyAttachments.length > 0) {
+      const images = readyAttachments.filter((a) => a.kind === 'image').map((a) => a.image!);
+      const textParts = readyAttachments
+        .filter((a) => a.kind === 'text')
+        .map((a) => `--- Uploaded: ${a.name} ---\n${a.text}`);
+
+      const baseText =
+        text || 'Please look at the attached file(s) and extract everything relevant to designing this deployment.';
+      const content = [baseText, ...textParts].join('\n\n');
+      const displayLines = [
+        ...(text ? [text] : []),
+        ...readyAttachments.map((a) => `${a.kind === 'image' ? '🖼️' : '📄'} Uploaded **${a.name}**`),
+      ];
+
+      setPendingAttachments((s) => ({ ...s, [id]: [] }));
+      updateDesign(id, (d) => ({ ...d, documentReviewTurnsLeft: 2 }));
+
+      sendMessage(
+        id,
+        selected.messages,
+        { role: 'user', content, displayContent: displayLines.join('\n'), images: images.length ? images : undefined },
+        { documentUpload: true }
+      );
+      return;
+    }
+
     const continuesDocReview = selected.documentReviewTurnsLeft > 0;
     const continuesTypedIntro = !continuesDocReview && selected.typedIntroTurnsLeft > 0;
     // The very first message of a design (right after the greeting) starts the
@@ -278,61 +331,87 @@ export default function DesignPage() {
     const startsTypedIntro = !continuesDocReview && !continuesTypedIntro && selected.messages.length === 1;
 
     if (continuesDocReview) {
-      updateDesign(selected.id, (d) => ({ ...d, documentReviewTurnsLeft: d.documentReviewTurnsLeft - 1 }));
+      updateDesign(id, (d) => ({ ...d, documentReviewTurnsLeft: d.documentReviewTurnsLeft - 1 }));
     } else if (continuesTypedIntro) {
-      updateDesign(selected.id, (d) => ({ ...d, typedIntroTurnsLeft: d.typedIntroTurnsLeft - 1 }));
+      updateDesign(id, (d) => ({ ...d, typedIntroTurnsLeft: d.typedIntroTurnsLeft - 1 }));
     } else if (startsTypedIntro) {
-      updateDesign(selected.id, (d) => ({ ...d, typedIntroTurnsLeft: 1 }));
+      updateDesign(id, (d) => ({ ...d, typedIntroTurnsLeft: 1 }));
     }
 
     sendMessage(
-      selected.id,
+      id,
       selected.messages,
       { role: 'user', content: text },
       { documentUpload: continuesDocReview, typedIntro: continuesTypedIntro || startsTypedIntro }
     );
   }
 
-  async function handleUploadFile(file: File) {
+  function handleAttachFiles(files: File[]) {
     if (!selected) return;
     const id = selected.id;
 
-    if (!getFileExtension(file.name)) {
-      setUploadStatus((s) => ({ ...s, [id]: { state: 'error', error: 'Unsupported file type — use .pdf, .txt, or .md.' } }));
-      return;
+    for (const file of files) {
+      const attachmentId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+      if (!getFileExtension(file.name)) {
+        setPendingAttachments((s) => ({
+          ...s,
+          [id]: [
+            ...(s[id] ?? []),
+            {
+              id: attachmentId,
+              name: file.name,
+              state: 'error',
+              error: 'Unsupported type — use .pdf, .docx, .xlsx, .xls, .pptx, .txt, .md, or an image.',
+            },
+          ],
+        }));
+        continue;
+      }
+
+      setPendingAttachments((s) => ({
+        ...s,
+        [id]: [...(s[id] ?? []), { id: attachmentId, name: file.name, state: 'reading' }],
+      }));
+
+      (async () => {
+        try {
+          if (isImageFile(file.name)) {
+            const image = await fileToImageBlock(file);
+            setPendingAttachments((s) => ({
+              ...s,
+              [id]: (s[id] ?? []).map((a) =>
+                a.id === attachmentId ? { ...a, state: 'ready', kind: 'image', image } : a
+              ),
+            }));
+          } else {
+            const text = await extractTextFromFile(file);
+            if (!text) throw new Error('No readable text found — it may be a scanned/image PDF.');
+            setPendingAttachments((s) => ({
+              ...s,
+              [id]: (s[id] ?? []).map((a) =>
+                a.id === attachmentId ? { ...a, state: 'ready', kind: 'text', text } : a
+              ),
+            }));
+          }
+        } catch (err) {
+          setPendingAttachments((s) => ({
+            ...s,
+            [id]: (s[id] ?? []).map((a) =>
+              a.id === attachmentId
+                ? { ...a, state: 'error', error: err instanceof Error ? err.message : `Could not read ${file.name}.` }
+                : a
+            ),
+          }));
+        }
+      })();
     }
+  }
 
-    setUploadStatus((s) => ({ ...s, [id]: { state: 'reading', fileName: file.name } }));
-
-    let text: string;
-    try {
-      text = await extractTextFromFile(file);
-    } catch {
-      setUploadStatus((s) => ({ ...s, [id]: { state: 'error', error: `Could not read ${file.name}. Try a different file.` } }));
-      return;
-    }
-
-    if (!text) {
-      setUploadStatus((s) => ({ ...s, [id]: { state: 'error', error: 'No readable text found — it may be a scanned/image PDF.' } }));
-      return;
-    }
-
-    setUploadStatus((s) => {
-      const next = { ...s };
-      delete next[id];
-      return next;
-    });
-
-    // This upload consumes turn 1 (summary + confirm); 2 more turns
-    // (reusable know-how, then gaps) still need the instruction.
-    updateDesign(id, (d) => ({ ...d, documentReviewTurnsLeft: 2 }));
-
-    sendMessage(
-      id,
-      selected.messages,
-      { role: 'user', content: text, displayContent: `📄 Uploaded **${file.name}**` },
-      { documentUpload: true }
-    );
+  function removeAttachment(attachmentId: string) {
+    if (!selected) return;
+    const id = selected.id;
+    setPendingAttachments((s) => ({ ...s, [id]: (s[id] ?? []).filter((a) => a.id !== attachmentId) }));
   }
 
   function handleFaceClick(code: string) {
@@ -347,7 +426,7 @@ export default function DesignPage() {
           <div>
             <div className="flex items-center gap-2">
               <CubeIcon size={18} />
-              <h1 className="text-lg font-semibold leading-none">AI Diffusion Cube</h1>
+              <h1 className="text-lg font-semibold leading-none">People+Possibilities Diffusion Lab</h1>
             </div>
             <p className="text-[#7A5C44] text-xs mt-1">Design your deployment</p>
           </div>
@@ -437,8 +516,9 @@ export default function DesignPage() {
                 <ChatPanel
                   messages={selected.messages}
                   onSend={handleUserSend}
-                  onUploadFile={handleUploadFile}
-                  uploadStatus={uploadStatus[selected.id] ?? null}
+                  onAttachFiles={handleAttachFiles}
+                  pendingAttachments={pendingAttachments[selected.id] ?? []}
+                  onRemoveAttachment={removeAttachment}
                   loading={loading}
                   placeholder="Describe your deployment context…"
                 />

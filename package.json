@@ -13,10 +13,13 @@
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.110.0",
     "googleapis": "^173.0.0",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.12.0",
     "next": "16.2.9",
     "pdfjs-dist": "^4.10.38",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
