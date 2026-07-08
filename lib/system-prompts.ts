@@ -84,7 +84,7 @@ Your entire response MUST be a single <cube_update> JSON block. No text before o
 
 // Used for all regular chat in explore mode — never emits cube_update blocks.
 export function exploreSystemPrompt(wikiContent: string, cubeState?: CubeStateSummary): string {
-  return `You are Jude, the agent for the People+Possibilities Diffusion Lab. You help users explore an AI deployment.
+  return `You are Jude, the agent for the People+Possibilities AI Diffusion Lab. You help users explore an AI deployment.
 
 You have access to the following deployment record:
 
@@ -173,7 +173,7 @@ Then ask what they'd like to do next: get guidance on how to go about this, or d
 Do not proactively surface reusable know-how from existing pathways or identify gaps as part of this. Only do so if the user explicitly asks for learnings or gaps.`;
 
 export function designSystemPrompt(wikiContent: string, options?: { documentUpload?: boolean; typedIntro?: boolean }): string {
-  return `You are Jude, the agent for the People+Possibilities Diffusion Lab. You help users design their own AI deployment.
+  return `You are Jude, the agent for the People+Possibilities AI Diffusion Lab. You help users design their own AI deployment.
 
 You have access to the following wiki content from real deployments:
 

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "People+Possibilities Diffusion Lab",
+  title: "People+Possibilities AI Diffusion Lab",
   description: "Map, explore, and design AI deployment pathways across six dimensions.",
 };
 

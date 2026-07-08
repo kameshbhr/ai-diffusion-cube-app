@@ -10,15 +10,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const email = headersList.get('x-user-email');
 
   const supabase = await createClient();
-  const { data: recentDesigns } = await supabase
+  const { data: designs } = await supabase
     .from('designs')
     .select('id, meta, updated_at')
-    .order('updated_at', { ascending: false })
-    .limit(6);
+    .order('updated_at', { ascending: false });
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar email={email} recentDesigns={recentDesigns ?? []} />
+      <Sidebar email={email} designs={designs ?? []} />
       <div className="flex-1 flex flex-col overflow-hidden">{children}</div>
     </div>
   );

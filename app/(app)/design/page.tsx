@@ -27,7 +27,7 @@ function DesignPageContent() {
   const [designsLoaded, setDesignsLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
-  const [appliedOpenParam, setAppliedOpenParam] = useState(false);
+  const [appliedOpenId, setAppliedOpenId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,12 +54,15 @@ function DesignPageContent() {
     };
   }, []);
 
-  // Deep-links from the sidebar's "Recent deployments" list (/design?open=<id>).
+  // Deep-links from the sidebar's "Deployments" list (/design?open=<id>).
   // Adjusted during render (React's documented pattern for this) rather than
-  // in an effect, guarded so it only ever applies once per mount — otherwise
-  // navigating back to the grid would be immediately overridden by the same param.
-  if (!appliedOpenParam && designsLoaded && openId && designs.some((d) => d.id === openId)) {
-    setAppliedOpenParam(true);
+  // in an effect. Tracks the last-applied id (not just "has this ever run")
+  // so clicking a *different* deployment link while one is already open still
+  // switches — a plain one-shot guard would ignore every param change after
+  // the first — while still leaving "← All deployments" alone since the URL
+  // param doesn't change when that's clicked.
+  if (designsLoaded && openId && openId !== appliedOpenId && designs.some((d) => d.id === openId)) {
+    setAppliedOpenId(openId);
     setSelection(openId);
   }
 
@@ -95,14 +98,14 @@ function DesignPageContent() {
         <div>
           <h1 className="text-2xl font-bold">Your deployments</h1>
           <p className="text-[#7A5C44] text-sm mt-1">
-            Design a new AI deployment, guided by lived experience from real deployments.
+            Design a new AI deployment, guided by lived experiences from existing deployments.
           </p>
         </div>
         <button
           onClick={() => setSelection('draft')}
           className="flex-shrink-0 px-4 py-2 bg-[#2C1A0E] hover:bg-[#3a2414] text-white rounded-lg text-sm font-medium transition-colors"
         >
-          + New project
+          + New Deployment
         </button>
       </div>
 
@@ -111,7 +114,7 @@ function DesignPageContent() {
       ) : designs.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-2 text-center py-16">
           <p className="text-[#7A5C44] text-sm">
-            Click <strong className="text-[#2C1A0E]">+ New project</strong> above to start designing your first deployment.
+            Click <strong className="text-[#2C1A0E]">+ New Deployment</strong> above to start designing your first deployment.
           </p>
           {loadError && <p className="text-[#D64045] text-xs">{loadError}</p>}
         </div>

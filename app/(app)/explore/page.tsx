@@ -71,7 +71,7 @@ function parsePathwayMeta(md: string): PathwayMeta {
 function ExplorePageContent() {
   const searchParams = useSearchParams();
   const pathwaySlugParam = searchParams.get('pathway');
-  const appliedPathwayParam = useRef(false);
+  const appliedPathwaySlug = useRef<string | null>(null);
 
   const [pathways, setPathways] = useState<Pathway[]>([]);
   const [selected, setSelected] = useState<Pathway | null>(null);
@@ -217,14 +217,16 @@ function ExplorePageContent() {
   }
 
   // Deep-links from elsewhere in the app (e.g. the home page's "already
-  // implemented" blocks): /explore?pathway=<slug>. Applied once the list has
-  // loaded, and only once per mount, so navigating back afterward isn't
-  // immediately overridden by the same param.
+  // implemented" blocks, or the sidebar's "Deployments" list): /explore?pathway=<slug>.
+  // Tracks the last-applied slug (not just "has this ever run") so clicking a
+  // *different* pathway link while one is already open still switches the
+  // selection — a plain one-shot guard would ignore every param change after
+  // the first.
   useEffect(() => {
-    if (appliedPathwayParam.current || !pathwaySlugParam || pathways.length === 0) return;
+    if (!pathwaySlugParam || pathwaySlugParam === appliedPathwaySlug.current || pathways.length === 0) return;
     const match = pathways.find((p) => p.slug === pathwaySlugParam);
     if (match) {
-      appliedPathwayParam.current = true;
+      appliedPathwaySlug.current = pathwaySlugParam;
       // Unlike a plain state derivation, this kicks off real network calls
       // (wiki fetches, the explore-init/copy API calls) — genuine effect work,
       // not something that could just be computed during render.
@@ -252,9 +254,9 @@ function ExplorePageContent() {
   if (!selected) {
     return (
       <div className="flex-1 overflow-y-auto bg-[#F5EFE6] text-[#2C1A0E] p-8">
-        <h1 className="text-2xl font-bold">Explore deployments</h1>
+        <h1 className="text-2xl font-bold">Deployments Library</h1>
         <p className="text-[#7A5C44] text-sm mt-1 mb-6">
-          Real AI deployments — pick one to see what worked, what didn&apos;t, and what&apos;s reusable.
+          Lived experiences from existing AI deployments - pick one to see what worked, what didn&apos;t, and what&apos;s reusable.
         </p>
         {pathways.length === 0 ? (
           <p className="text-[#7A5C44] text-sm">Loading deployments…</p>
@@ -268,7 +270,7 @@ function ExplorePageContent() {
               >
                 <div className="font-semibold text-[#2C1A0E]">{p.name}</div>
                 <p className="text-sm text-[#7A5C44] leading-relaxed">
-                  {copyCache[p.slug]?.card ?? p.description}
+                  {copyCache[p.slug]?.card ?? <span className="italic text-[#7A5C44]/60">Loading description…</span>}
                 </p>
               </button>
             ))}

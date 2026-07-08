@@ -1,17 +1,18 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import CubeIcon from '@/components/CubeIcon';
 import SignOutButton from '@/components/SignOutButton';
+import { Pathway, fetchPathways } from '@/lib/pathways';
 
 const NAV_ITEMS = [
-  { href: '/', label: 'Home', icon: '🏠' },
   { href: '/explore', label: 'Explore', icon: '🔍' },
   { href: '/design', label: 'Design', icon: '🧩' },
 ];
 
-interface RecentDesign {
+interface DesignSummary {
   id: string;
   meta: { name?: string } | null;
   updated_at: string;
@@ -19,24 +20,38 @@ interface RecentDesign {
 
 interface Props {
   email: string | null;
-  recentDesigns: RecentDesign[];
+  designs: DesignSummary[];
 }
 
-export default function Sidebar({ email, recentDesigns }: Props) {
+export default function Sidebar({ email, designs }: Props) {
   const pathname = usePathname();
+  const inExploreContext = pathname?.startsWith('/explore') ?? false;
+
+  const [pathways, setPathways] = useState<Pathway[]>([]);
+
+  // Fetched client-side (unlike the designs list) so browsing Explore doesn't
+  // add a blocking GitHub fetch to every navigation's server-side render.
+  useEffect(() => {
+    if (!inExploreContext) return;
+    fetchPathways()
+      .then(setPathways)
+      .catch(() => {});
+  }, [inExploreContext]);
+
+  const items = inExploreContext
+    ? pathways.map((p) => ({ key: p.slug, href: `/explore?pathway=${p.slug}`, label: p.name }))
+    : designs.map((d) => ({ key: d.id, href: `/design?open=${d.id}`, label: d.meta?.name || 'New deployment' }));
 
   return (
     <aside className="w-[220px] flex-shrink-0 h-screen flex flex-col bg-[#F5EFE6] text-[#2C1A0E] border-r border-[#7A5C44]/20">
       <Link href="/" className="p-4 flex items-center gap-2 border-b border-[#7A5C44]/20 hover:bg-[#7A5C44]/10 transition-colors">
         <CubeIcon size={24} />
-        <span className="font-semibold text-sm leading-tight">People+Possibilities Diffusion Lab</span>
+        <span className="font-semibold text-sm leading-tight">People+Possibilities AI Diffusion Lab</span>
       </Link>
 
       <nav className="p-3 space-y-1">
         {NAV_ITEMS.map((item) => {
-          // Home's href is "/", which is a prefix of every path — so it needs
-          // an exact match instead of the startsWith used for the other tabs.
-          const active = item.href === '/' ? pathname === '/' : pathname?.startsWith(item.href);
+          const active = pathname?.startsWith(item.href);
           return (
             <Link
               key={item.href}
@@ -53,18 +68,18 @@ export default function Sidebar({ email, recentDesigns }: Props) {
       </nav>
 
       <div className="flex-1 overflow-y-auto px-3 pb-3">
-        {recentDesigns.length > 0 && (
+        {items.length > 0 && (
           <>
-            <p className="text-[10px] uppercase tracking-wide text-[#7A5C44]/70 px-3 mt-2 mb-1">Recent deployments</p>
+            <p className="text-[10px] uppercase tracking-wide text-[#7A5C44]/70 px-3 mt-2 mb-1">Deployments</p>
             <div className="space-y-0.5">
-              {recentDesigns.map((d) => (
+              {items.map((item) => (
                 <Link
-                  key={d.id}
-                  href={`/design?open=${d.id}`}
+                  key={item.key}
+                  href={item.href}
                   className="block px-3 py-1.5 rounded-lg text-xs text-[#7A5C44] hover:bg-[#7A5C44]/10 hover:text-[#2C1A0E] truncate transition-colors"
-                  title={d.meta?.name || 'New deployment'}
+                  title={item.label}
                 >
-                  {d.meta?.name || 'New deployment'}
+                  {item.label}
                 </Link>
               ))}
             </div>
