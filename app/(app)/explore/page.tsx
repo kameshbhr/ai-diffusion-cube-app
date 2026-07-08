@@ -1,16 +1,11 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
-import Cube3D, { CubeState, FaceState } from '@/components/Cube3D';
+import { Suspense, useEffect, useState, useCallback, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { CubeState, FaceState } from '@/components/Cube3D';
 import ChatPanel, { Message } from '@/components/ChatPanel';
-import CubeIcon from '@/components/CubeIcon';
-import SignOutButton from '@/components/SignOutButton';
-
-interface Pathway {
-  slug: string;
-  name: string;
-  description: string;
-}
+import DimensionList from '@/components/DimensionList';
+import { Pathway, fetchPathways } from '@/lib/pathways';
 
 interface PathwayMeta {
   sector: string;
@@ -30,26 +25,6 @@ function parsePathwayCopy(text: string): PathwayCopy | null {
   const match = text.match(/<pathway_copy>([\s\S]*?)<\/pathway_copy>/);
   if (!match) return null;
   try { return JSON.parse(match[1]); } catch { return null; }
-}
-
-const LEGEND = [
-  { color: '#3D8B37', label: 'Well documented' },
-  { color: '#E8A838', label: 'Gaps remain' },
-  { color: '#D64045', label: 'Critical gap' },
-  { color: '#1A3A5C', label: 'Not documented' },
-];
-
-function CubeLegend() {
-  return (
-    <div className="flex flex-col gap-1">
-      {LEGEND.map((l) => (
-        <div key={l.label} className="flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: l.color }} />
-          <span className="text-[10px] text-[#7A5C44]">{l.label}</span>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 const DIMENSION_NAMES: Record<string, string> = {
@@ -78,22 +53,6 @@ function stripCubeUpdate(text: string): string {
   return (idx === -1 ? text : text.slice(0, idx)).trim();
 }
 
-// Parse pathways from the index.md "## Pathways" table:
-// | [Name](pathways/slug.md) | Summary text |
-function parsePathways(indexMd: string): Pathway[] {
-  const results: Pathway[] = [];
-  const re = /\|\s*\[([^\]]+)\]\(pathways\/([^)]+)\.md\)\s*\|\s*([^|\n]+?)\s*\|/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(indexMd)) !== null) {
-    results.push({
-      name: m[1].trim(),
-      slug: m[2].trim(),
-      description: m[3].trim(),
-    });
-  }
-  return results;
-}
-
 // Parse a pathway page's metadata header and Summary section.
 function parsePathwayMeta(md: string): PathwayMeta {
   const grab = (label: string) => {
@@ -109,7 +68,11 @@ function parsePathwayMeta(md: string): PathwayMeta {
   };
 }
 
-export default function ExplorePage() {
+function ExplorePageContent() {
+  const searchParams = useSearchParams();
+  const pathwaySlugParam = searchParams.get('pathway');
+  const appliedPathwayParam = useRef(false);
+
   const [pathways, setPathways] = useState<Pathway[]>([]);
   const [selected, setSelected] = useState<Pathway | null>(null);
   const [meta, setMeta] = useState<PathwayMeta>(EMPTY_META);
@@ -147,11 +110,8 @@ export default function ExplorePage() {
 
   // Load pathway list from index
   useEffect(() => {
-    const base = process.env.NEXT_PUBLIC_GITHUB_WIKI_BASE_URL ?? '';
-    fetch(`${base}/wiki/index.md`)
-      .then((r) => r.text())
-      .then((md) => {
-        const list = parsePathways(md);
+    fetchPathways()
+      .then((list) => {
         setPathways(list);
         list.forEach((p) => fetchPathwayCopy(p.slug));
       })
@@ -256,7 +216,25 @@ export default function ExplorePage() {
     messagesRef.current = [greeting];
   }
 
-  function handleFaceClick(code: string) {
+  // Deep-links from elsewhere in the app (e.g. the home page's "already
+  // implemented" blocks): /explore?pathway=<slug>. Applied once the list has
+  // loaded, and only once per mount, so navigating back afterward isn't
+  // immediately overridden by the same param.
+  useEffect(() => {
+    if (appliedPathwayParam.current || !pathwaySlugParam || pathways.length === 0) return;
+    const match = pathways.find((p) => p.slug === pathwaySlugParam);
+    if (match) {
+      appliedPathwayParam.current = true;
+      // Unlike a plain state derivation, this kicks off real network calls
+      // (wiki fetches, the explore-init/copy API calls) — genuine effect work,
+      // not something that could just be computed during render.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      selectPathway(match);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathwaySlugParam, pathways]);
+
+  function handleDimensionClick(code: string) {
     if (!selected) return;
     const dimName = DIMENSION_NAMES[code];
     sendMessage(
@@ -271,93 +249,78 @@ export default function ExplorePage() {
     sendMessage(text, messagesRef.current, selected.slug);
   }
 
-  return (
-    <div className="flex h-screen bg-[#F5EFE6] text-[#2C1A0E] overflow-hidden">
-      {/* Left panel — pathway list */}
-      <aside className="w-[30%] border-r border-[#7A5C44]/20 flex flex-col">
-        <div className="p-4 border-b border-[#7A5C44]/20 flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <CubeIcon size={18} />
-              <h1 className="text-lg font-semibold leading-none">People+Possibilities Diffusion Lab</h1>
-            </div>
-            <p className="text-[#7A5C44] text-xs mt-1">Explore existing deployments</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <a href="/" className="text-xs text-[#7A5C44] hover:text-[#2C1A0E] border border-[#7A5C44]/30 rounded-lg px-3 py-1.5 transition-colors">
-              ← Back
-            </a>
-            <SignOutButton />
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {pathways.length === 0 && (
-            <p className="text-[#7A5C44] text-sm">Loading deployments…</p>
-          )}
-          {pathways.map((p) => (
-            <button
-              key={p.slug}
-              onClick={() => selectPathway(p)}
-              className={`w-full text-left rounded-xl p-4 border transition-colors ${
-                selected?.slug === p.slug
-                  ? 'bg-[#2C1A0E] text-white border-[#E8A838]'
-                  : 'bg-white border-[#7A5C44]/20 hover:border-[#7A5C44]/50 text-[#2C1A0E]'
-              }`}
-            >
-              <div className="font-medium text-sm">{p.name}</div>
-              {(copyCache[p.slug]?.card ?? p.description) && (
-                <div className={`text-xs mt-1 leading-relaxed ${selected?.slug === p.slug ? 'text-[#C4A882]' : 'text-[#7A5C44]'}`}>
-                  {copyCache[p.slug]?.card ?? p.description}
-                </div>
-              )}
-            </button>
-          ))}
-        </div>
-      </aside>
-
-      {/* Right panel — cube + chat */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {!selected ? (
-          <div className="flex-1 flex items-center justify-center text-[#7A5C44]">
-            Select a deployment to begin
-          </div>
+  if (!selected) {
+    return (
+      <div className="flex-1 overflow-y-auto bg-[#F5EFE6] text-[#2C1A0E] p-8">
+        <h1 className="text-2xl font-bold">Explore deployments</h1>
+        <p className="text-[#7A5C44] text-sm mt-1 mb-6">
+          Real AI deployments — pick one to see what worked, what didn&apos;t, and what&apos;s reusable.
+        </p>
+        {pathways.length === 0 ? (
+          <p className="text-[#7A5C44] text-sm">Loading deployments…</p>
         ) : (
-          <>
-            {/* Deployment info — full width */}
-            <div className="h-[25%] border-b border-[#7A5C44]/20 overflow-y-auto p-4">
-              <div className="flex items-center gap-3">
-                <h2 className="text-lg font-bold text-[#2C1A0E]">{selected.name}</h2>
-                {loading && isInit.current && (
-                  <span className="text-xs text-[#E8A838] animate-pulse">Analysing deployment…</span>
-                )}
-              </div>
-              <p className="text-xs text-[#7A5C44] mt-1">
-                {[meta.sector, meta.geography, meta.status].filter(Boolean).join(' · ')}
-              </p>
-              <p className="text-sm text-[#2C1A0E] mt-2 leading-relaxed whitespace-pre-line">
-                {copyCache[selected.slug]?.summary || meta.summary || 'Loading summary…'}
-              </p>
-            </div>
-            {/* Chat + cube */}
-            <div className="h-[75%] flex overflow-hidden">
-              <div className="flex-1 min-w-0">
-                <ChatPanel
-                  messages={messages}
-                  onSend={handleUserSend}
-                  loading={loading}
-                  placeholder="Ask about this deployment…"
-                />
-              </div>
-              <div className="w-[190px] flex-shrink-0 border-l border-[#7A5C44]/20 flex flex-col items-center justify-center gap-3 p-3">
-                <div style={{ width: 160, height: 160 }}>
-                  <Cube3D cubeState={cubeState} onFaceClick={handleFaceClick} size={120} />
-                </div>
-                <CubeLegend />
-              </div>
-            </div>
-          </>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            {pathways.map((p) => (
+              <button
+                key={p.slug}
+                onClick={() => selectPathway(p)}
+                className="text-left rounded-2xl border border-[#7A5C44]/20 bg-white hover:border-[#7A5C44]/50 hover:shadow-sm transition-all p-5 flex flex-col gap-2"
+              >
+                <div className="font-semibold text-[#2C1A0E]">{p.name}</div>
+                <p className="text-sm text-[#7A5C44] leading-relaxed">
+                  {copyCache[p.slug]?.card ?? p.description}
+                </p>
+              </button>
+            ))}
+          </div>
         )}
-      </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden bg-[#F5EFE6] text-[#2C1A0E]">
+      {/* Deployment info */}
+      <div className="border-b border-[#7A5C44]/20 p-4">
+        <button
+          onClick={() => setSelected(null)}
+          className="text-xs text-[#7A5C44] hover:text-[#2C1A0E] mb-2 transition-colors"
+        >
+          ← All deployments
+        </button>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-bold text-[#2C1A0E]">{selected.name}</h2>
+          {loading && isInit.current && (
+            <span className="text-xs text-[#E8A838] animate-pulse">Analysing deployment…</span>
+          )}
+        </div>
+        <p className="text-xs text-[#7A5C44] mt-1">
+          {[meta.sector, meta.geography, meta.status].filter(Boolean).join(' · ')}
+        </p>
+        <p className="text-sm text-[#2C1A0E] mt-2 leading-relaxed whitespace-pre-line max-h-24 overflow-y-auto">
+          {copyCache[selected.slug]?.summary || meta.summary || 'Loading summary…'}
+        </p>
+        <div className="mt-3">
+          <DimensionList cubeState={cubeState} onSelect={handleDimensionClick} />
+        </div>
+      </div>
+      {/* Chat */}
+      <div className="flex-1 overflow-hidden">
+        <ChatPanel
+          messages={messages}
+          onSend={handleUserSend}
+          loading={loading}
+          placeholder="Ask about this deployment…"
+        />
+      </div>
     </div>
+  );
+}
+
+export default function ExplorePage() {
+  return (
+    <Suspense fallback={null}>
+      <ExplorePageContent />
+    </Suspense>
   );
 }

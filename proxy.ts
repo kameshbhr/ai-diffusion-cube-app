@@ -48,6 +48,18 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/', request.url));
   }
 
+  if (user) {
+    // Forward the already-verified user's email via a request header so the
+    // app layout doesn't need a second getUser() round trip on every
+    // navigation — that duplicate Auth API call was the main source of the
+    // slow "Home" click (proxy.ts already paid this cost once above).
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set('x-user-email', user.email ?? '');
+    const finalResponse = NextResponse.next({ request: { headers: requestHeaders } });
+    response.cookies.getAll().forEach((cookie) => finalResponse.cookies.set(cookie));
+    return finalResponse;
+  }
+
   return response;
 }
 

@@ -1,141 +1,34 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import Cube3D, { CubeState, FaceState } from '@/components/Cube3D';
-import ChatPanel, { Message, PendingAttachment } from '@/components/ChatPanel';
-import DimensionPanel from '@/components/DimensionPanel';
-import CubeIcon from '@/components/CubeIcon';
-import SignOutButton from '@/components/SignOutButton';
-import { extractTextFromFile, fileToImageBlock, getFileExtension, isImageFile } from '@/lib/extract-text';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import DesignDetailView from '@/components/DesignDetailView';
+import { DesignConversation, rowToConversation } from '@/lib/design-conversation';
 import { createClient } from '@/lib/supabase/client';
 
-interface DesignMeta {
-  name: string;
-  sector: string;
-  geography: string;
-  status: string;
-  summary: string;
+function formatRelativeTime(iso: string): string {
+  const minutes = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
-interface Design {
-  id: string;
-  meta: DesignMeta;
-  cubeState: CubeState;
-  messages: Message[];
-  // Counts down the follow-up turns (confirm/correct, then guidance-vs-needs)
-  // that must still carry the document-review instruction after an upload.
-  documentReviewTurnsLeft: number;
-  // Counts down the one follow-up turn (guidance-vs-needs) that must still
-  // carry the typed-intro instruction after the user's first typed message.
-  typedIntroTurnsLeft: number;
-}
+// 'draft' means "creating a new one" — not a real id yet, since creation is
+// deferred until the user actually sends a first message or attachment.
+type Selection = string | 'draft' | null;
 
-// A staged attachment carries its extracted payload once processed, so it can
-// be folded into the actual API message once the user presses Enter.
-interface StagedAttachment extends PendingAttachment {
-  kind?: 'image' | 'text';
-  text?: string;
-  image?: { mediaType: string; base64: string };
-}
+function DesignPageContent() {
+  const searchParams = useSearchParams();
+  const openId = searchParams.get('open');
 
-const EMPTY_META: DesignMeta = { name: '', sector: '', geography: '', status: '', summary: '' };
-
-const INITIAL_MESSAGE =
-  "Hi, I'm Jude. I'm here to help you design your AI deployment across six dimensions — from problem framing to operating model.\n\nYou can start in two ways:\n📄 Upload a document or image — a concept note, proposal, slide deck, spreadsheet, or a photo of one. I'll read it and get us started.\n💬 Just tell me — describe what you're trying to do, the problem you're solving, and who it's for.";
-
-const LEGEND = [
-  { color: '#3D8B37', label: 'Well defined' },
-  { color: '#E8A838', label: 'Gaps remain' },
-  { color: '#D64045', label: 'Critical gap' },
-  { color: '#1A3A5C', label: 'Not yet discussed' },
-];
-
-function CubeLegend() {
-  return (
-    <div className="flex flex-col gap-1">
-      {LEGEND.map((l) => (
-        <div key={l.label} className="flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: l.color }} />
-          <span className="text-[10px] text-[#7A5C44]">{l.label}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-const DARK_CUBE: CubeState = Object.fromEntries(
-  ['A', 'B', 'C', 'D', 'E', 'F'].map((c) => [c, { status: 'dark', phrase: '' } as FaceState])
-);
-
-// Shape of a row in the `designs` table (see supabase/migrations/0001_designs.sql).
-interface DesignRow {
-  id: string;
-  meta: DesignMeta;
-  cube_state: CubeState;
-  messages: Message[];
-  document_review_turns_left: number;
-  typed_intro_turns_left: number;
-}
-
-function rowToDesign(row: DesignRow): Design {
-  return {
-    id: row.id,
-    meta: row.meta ?? EMPTY_META,
-    cubeState: row.cube_state ?? DARK_CUBE,
-    messages: row.messages ?? [],
-    documentReviewTurnsLeft: row.document_review_turns_left ?? 0,
-    typedIntroTurnsLeft: row.typed_intro_turns_left ?? 0,
-  };
-}
-
-interface ParsedCubeUpdate {
-  cube: Record<string, FaceState>;
-  meta?: Partial<DesignMeta>;
-}
-
-function parseCubeUpdate(text: string): ParsedCubeUpdate | null {
-  const match = text.match(/<cube_update>([\s\S]*?)<\/cube_update>/);
-  if (!match) return null;
-  try {
-    const parsed = JSON.parse(match[1]);
-    const { meta, ...cube } = parsed;
-    return { cube, meta };
-  } catch {
-    return null;
-  }
-}
-
-// Cuts at the opening tag rather than matching a closed block, so a
-// <cube_update> that has only partially streamed in never renders.
-function stripCubeUpdate(text: string): string {
-  const idx = text.indexOf('<cube_update');
-  return (idx === -1 ? text : text.slice(0, idx)).trim();
-}
-
-export default function DesignPage() {
-  const [designs, setDesigns] = useState<Design[]>([]);
+  const [designs, setDesigns] = useState<DesignConversation[]>([]);
   const [designsLoaded, setDesignsLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [activeFace, setActiveFace] = useState<string | null>(null);
-  const [pendingAttachments, setPendingAttachments] = useState<Record<string, StagedAttachment[]>>({});
-  const designsRef = useRef<Design[]>([]);
+  const [selection, setSelection] = useState<Selection>(null);
+  const [appliedOpenParam, setAppliedOpenParam] = useState(false);
 
-  const selected = designs.find((d) => d.id === selectedId) ?? null;
-
-  // Keeps designsRef in sync synchronously so async code (the streaming loop
-  // in sendMessage) can read the latest state without a stale closure.
-  const updateDesign = useCallback((id: string, updater: (d: Design) => Design) => {
-    setDesigns((prev) => {
-      const next = prev.map((d) => (d.id === id ? updater(d) : d));
-      designsRef.current = next;
-      return next;
-    });
-  }, []);
-
-  // Load this user's saved designs once on mount — RLS scopes the query to
-  // the authenticated user, so no explicit user_id filter is needed here.
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -143,7 +36,7 @@ export default function DesignPage() {
       const { data, error } = await supabase
         .from('designs')
         .select('*')
-        .order('created_at', { ascending: true });
+        .order('updated_at', { ascending: false });
 
       if (cancelled) return;
       if (error) {
@@ -152,9 +45,7 @@ export default function DesignPage() {
         return;
       }
 
-      const loaded = (data as DesignRow[]).map(rowToDesign);
-      designsRef.current = loaded;
-      setDesigns(loaded);
+      setDesigns((data as Parameters<typeof rowToConversation>[0][]).map(rowToConversation));
       setDesignsLoaded(true);
     }
     load();
@@ -163,383 +54,116 @@ export default function DesignPage() {
     };
   }, []);
 
-  async function persistDesign(design: Design) {
-    const supabase = createClient();
-    await supabase
-      .from('designs')
-      .update({
-        meta: design.meta,
-        cube_state: design.cubeState,
-        messages: design.messages,
-        document_review_turns_left: design.documentReviewTurnsLeft,
-        typed_intro_turns_left: design.typedIntroTurnsLeft,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', design.id);
+  // Deep-links from the sidebar's "Recent deployments" list (/design?open=<id>).
+  // Adjusted during render (React's documented pattern for this) rather than
+  // in an effect, guarded so it only ever applies once per mount — otherwise
+  // navigating back to the grid would be immediately overridden by the same param.
+  if (!appliedOpenParam && designsLoaded && openId && designs.some((d) => d.id === openId)) {
+    setAppliedOpenParam(true);
+    setSelection(openId);
   }
 
-  async function createNew() {
-    setLoadError(null);
-    const supabase = createClient();
-    const { data, error } = await supabase
-      .from('designs')
-      .insert({
-        meta: EMPTY_META,
-        cube_state: DARK_CUBE,
-        messages: [{ role: 'assistant', content: INITIAL_MESSAGE }],
-      })
-      .select()
-      .single();
+  async function deleteDesign(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
+    if (!window.confirm('Delete this deployment? This cannot be undone.')) return;
 
-    if (error || !data) {
-      setLoadError('Could not create a new deployment. Try again.');
+    const supabase = createClient();
+    const { error } = await supabase.from('designs').delete().eq('id', id);
+    if (error) {
+      setLoadError('Could not delete that deployment. Try again.');
       return;
     }
-
-    const newDesign = rowToDesign(data as DesignRow);
-    setDesigns((prev) => {
-      const next = [...prev, newDesign];
-      designsRef.current = next;
-      return next;
-    });
-    setSelectedId(newDesign.id);
-    setActiveFace(null);
+    setDesigns((prev) => prev.filter((d) => d.id !== id));
   }
 
-  function selectDesign(id: string) {
-    setSelectedId(id);
-    setActiveFace(null);
-  }
-
-  const sendMessage = useCallback(
-    async (id: string, history: Message[], userMessage: Message, opts?: { documentUpload?: boolean; typedIntro?: boolean }) => {
-      const next: Message[] = [...history, userMessage];
-      updateDesign(id, (d) => ({ ...d, messages: next }));
-      setLoading(true);
-
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: next.map(({ role, content, images }) => ({
-            role,
-            content:
-              images && images.length > 0
-                ? [
-                    { type: 'text', text: content },
-                    ...images.map((img) => ({
-                      type: 'image',
-                      source: { type: 'base64', media_type: img.mediaType, data: img.base64 },
-                    })),
-                  ]
-                : content,
-          })),
-          mode: 'design',
-          documentUpload: opts?.documentUpload,
-          typedIntro: opts?.typedIntro,
-        }),
-      });
-
-      if (!res.body) { setLoading(false); return; }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let assistantText = '';
-
-      updateDesign(id, (d) => ({ ...d, messages: [...d.messages, { role: 'assistant', content: '' }] }));
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        assistantText += decoder.decode(value, { stream: true });
-
-        const update = parseCubeUpdate(assistantText);
-        if (update) {
-          updateDesign(id, (d) => {
-            const nextCube = { ...d.cubeState };
-            for (const [code, face] of Object.entries(update.cube)) {
-              if (face) nextCube[code] = face;
-            }
-            const m = update.meta;
-            const nextMeta: DesignMeta = m
-              ? {
-                  name: m.name || d.meta.name,
-                  sector: m.sector || d.meta.sector,
-                  geography: m.geography || d.meta.geography,
-                  status: m.status || d.meta.status,
-                  summary: m.summary || d.meta.summary,
-                }
-              : d.meta;
-            return { ...d, cubeState: nextCube, meta: nextMeta };
-          });
-        }
-
-        updateDesign(id, (d) => {
-          const msgs = [...d.messages];
-          msgs[msgs.length - 1] = { role: 'assistant', content: stripCubeUpdate(assistantText) };
-          return { ...d, messages: msgs };
-        });
-      }
-
-      setLoading(false);
-
-      const finalDesign = designsRef.current.find((d) => d.id === id);
-      if (finalDesign) void persistDesign(finalDesign);
-    },
-    [updateDesign]
-  );
-
-  function handleUserSend(text: string) {
-    if (!selected) return;
-    const id = selected.id;
-    const attachments = pendingAttachments[id] ?? [];
-    const readyAttachments = attachments.filter((a) => a.state === 'ready');
-
-    // Attaching a file always starts a fresh document-review sequence for
-    // this turn, same as a bare upload used to — regardless of any typed-intro
-    // sequencing already in progress.
-    if (readyAttachments.length > 0) {
-      const images = readyAttachments.filter((a) => a.kind === 'image').map((a) => a.image!);
-      const textParts = readyAttachments
-        .filter((a) => a.kind === 'text')
-        .map((a) => `--- Uploaded: ${a.name} ---\n${a.text}`);
-
-      const baseText =
-        text || 'Please look at the attached file(s) and extract everything relevant to designing this deployment.';
-      const content = [baseText, ...textParts].join('\n\n');
-      const displayLines = [
-        ...(text ? [text] : []),
-        ...readyAttachments.map((a) => `${a.kind === 'image' ? '🖼️' : '📄'} Uploaded **${a.name}**`),
-      ];
-
-      setPendingAttachments((s) => ({ ...s, [id]: [] }));
-      updateDesign(id, (d) => ({ ...d, documentReviewTurnsLeft: 2 }));
-
-      sendMessage(
-        id,
-        selected.messages,
-        { role: 'user', content, displayContent: displayLines.join('\n'), images: images.length ? images : undefined },
-        { documentUpload: true }
-      );
-      return;
-    }
-
-    const continuesDocReview = selected.documentReviewTurnsLeft > 0;
-    const continuesTypedIntro = !continuesDocReview && selected.typedIntroTurnsLeft > 0;
-    // The very first message of a design (right after the greeting) starts the
-    // typed-intro sequence, unless a document upload already claimed that role.
-    const startsTypedIntro = !continuesDocReview && !continuesTypedIntro && selected.messages.length === 1;
-
-    if (continuesDocReview) {
-      updateDesign(id, (d) => ({ ...d, documentReviewTurnsLeft: d.documentReviewTurnsLeft - 1 }));
-    } else if (continuesTypedIntro) {
-      updateDesign(id, (d) => ({ ...d, typedIntroTurnsLeft: d.typedIntroTurnsLeft - 1 }));
-    } else if (startsTypedIntro) {
-      updateDesign(id, (d) => ({ ...d, typedIntroTurnsLeft: 1 }));
-    }
-
-    sendMessage(
-      id,
-      selected.messages,
-      { role: 'user', content: text },
-      { documentUpload: continuesDocReview, typedIntro: continuesTypedIntro || startsTypedIntro }
+  if (selection) {
+    const existing = selection === 'draft' ? null : designs.find((d) => d.id === selection) ?? null;
+    return (
+      <DesignDetailView
+        key={selection}
+        initial={existing}
+        onBack={() => setSelection(null)}
+        onCreated={(c) => setDesigns((prev) => [c, ...prev])}
+        onChange={(c) => setDesigns((prev) => prev.map((d) => (d.id === c.id ? c : d)))}
+      />
     );
   }
 
-  function handleAttachFiles(files: File[]) {
-    if (!selected) return;
-    const id = selected.id;
-
-    for (const file of files) {
-      const attachmentId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-      if (!getFileExtension(file.name)) {
-        setPendingAttachments((s) => ({
-          ...s,
-          [id]: [
-            ...(s[id] ?? []),
-            {
-              id: attachmentId,
-              name: file.name,
-              state: 'error',
-              error: 'Unsupported type — use .pdf, .docx, .xlsx, .xls, .pptx, .txt, .md, or an image.',
-            },
-          ],
-        }));
-        continue;
-      }
-
-      setPendingAttachments((s) => ({
-        ...s,
-        [id]: [...(s[id] ?? []), { id: attachmentId, name: file.name, state: 'reading' }],
-      }));
-
-      (async () => {
-        try {
-          if (isImageFile(file.name)) {
-            const image = await fileToImageBlock(file);
-            setPendingAttachments((s) => ({
-              ...s,
-              [id]: (s[id] ?? []).map((a) =>
-                a.id === attachmentId ? { ...a, state: 'ready', kind: 'image', image } : a
-              ),
-            }));
-          } else {
-            const text = await extractTextFromFile(file);
-            if (!text) throw new Error('No readable text found — it may be a scanned/image PDF.');
-            setPendingAttachments((s) => ({
-              ...s,
-              [id]: (s[id] ?? []).map((a) =>
-                a.id === attachmentId ? { ...a, state: 'ready', kind: 'text', text } : a
-              ),
-            }));
-          }
-        } catch (err) {
-          setPendingAttachments((s) => ({
-            ...s,
-            [id]: (s[id] ?? []).map((a) =>
-              a.id === attachmentId
-                ? { ...a, state: 'error', error: err instanceof Error ? err.message : `Could not read ${file.name}.` }
-                : a
-            ),
-          }));
-        }
-      })();
-    }
-  }
-
-  function removeAttachment(attachmentId: string) {
-    if (!selected) return;
-    const id = selected.id;
-    setPendingAttachments((s) => ({ ...s, [id]: (s[id] ?? []).filter((a) => a.id !== attachmentId) }));
-  }
-
-  function handleFaceClick(code: string) {
-    setActiveFace((prev) => (prev === code ? null : code));
-  }
-
   return (
-    <div className="flex h-screen bg-[#F5EFE6] text-[#2C1A0E] overflow-hidden">
-      {/* Left panel — deployments in progress */}
-      <aside className="w-[30%] border-r border-[#7A5C44]/20 flex flex-col">
-        <div className="p-4 border-b border-[#7A5C44]/20 flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <CubeIcon size={18} />
-              <h1 className="text-lg font-semibold leading-none">People+Possibilities Diffusion Lab</h1>
-            </div>
-            <p className="text-[#7A5C44] text-xs mt-1">Design your deployment</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <a href="/" className="text-xs text-[#7A5C44] hover:text-[#2C1A0E] border border-[#7A5C44]/30 rounded-lg px-3 py-1.5 transition-colors">
-              ← Back
-            </a>
-            <SignOutButton />
-          </div>
+    <div className="flex-1 overflow-y-auto bg-[#F5EFE6] text-[#2C1A0E] p-8">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">Your deployments</h1>
+          <p className="text-[#7A5C44] text-sm mt-1">
+            Design a new AI deployment, guided by lived experience from real deployments.
+          </p>
         </div>
+        <button
+          onClick={() => setSelection('draft')}
+          className="flex-shrink-0 px-4 py-2 bg-[#2C1A0E] hover:bg-[#3a2414] text-white rounded-lg text-sm font-medium transition-colors"
+        >
+          + New project
+        </button>
+      </div>
 
-        {!designsLoaded ? (
-          <div className="flex-1 flex items-center justify-center">
-            <p className="text-[#7A5C44] text-sm">Loading your deployments…</p>
-          </div>
-        ) : designs.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6 text-center">
-            <p className="text-[#7A5C44] text-sm">You haven&apos;t started designing a deployment yet.</p>
-            {loadError && <p className="text-[#D64045] text-xs">{loadError}</p>}
-            <button
-              onClick={createNew}
-              className="px-6 py-3 bg-[#2C1A0E] hover:bg-[#3a2414] text-white rounded-xl text-sm font-medium transition-colors"
-            >
-              + Create New
-            </button>
-          </div>
-        ) : (
-          <>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {designs.map((d) => (
-                <button
-                  key={d.id}
-                  onClick={() => selectDesign(d.id)}
-                  className={`w-full text-left rounded-xl p-4 border transition-colors ${
-                    selectedId === d.id
-                      ? 'bg-[#2C1A0E] text-white border-[#E8A838]'
-                      : 'bg-white border-[#7A5C44]/20 hover:border-[#7A5C44]/50 text-[#2C1A0E]'
-                  }`}
-                >
-                  <div className="font-medium text-sm">{d.meta.name || 'New deployment'}</div>
-                  {(d.meta.sector || d.meta.geography) && (
-                    <div className={`text-xs mt-1 ${selectedId === d.id ? 'text-[#C4A882]' : 'text-[#7A5C44]'}`}>
-                      {[d.meta.sector, d.meta.geography].filter(Boolean).join(' · ')}
-                    </div>
-                  )}
-                </button>
-              ))}
-            </div>
-            <div className="p-4 border-t border-[#7A5C44]/20">
-              {loadError && <p className="text-[#D64045] text-xs mb-2">{loadError}</p>}
-              <button
-                onClick={createNew}
-                className="w-full px-4 py-2 border border-[#7A5C44]/30 hover:border-[#7A5C44]/60 text-[#2C1A0E] rounded-lg text-sm font-medium transition-colors"
+      {!designsLoaded ? (
+        <p className="text-[#7A5C44] text-sm">Loading your deployments…</p>
+      ) : designs.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-2 text-center py-16">
+          <p className="text-[#7A5C44] text-sm">
+            Click <strong className="text-[#2C1A0E]">+ New project</strong> above to start designing your first deployment.
+          </p>
+          {loadError && <p className="text-[#D64045] text-xs">{loadError}</p>}
+        </div>
+      ) : (
+        <>
+          {loadError && <p className="text-[#D64045] text-xs mb-4">{loadError}</p>}
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            {designs.map((d) => (
+              <div
+                key={d.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelection(d.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setSelection(d.id);
+                  }
+                }}
+                className="relative text-left rounded-2xl border border-[#7A5C44]/20 bg-white hover:border-[#7A5C44]/50 hover:shadow-sm transition-all p-5 flex flex-col gap-2 group cursor-pointer"
               >
-                + Create New
-              </button>
-            </div>
-          </>
-        )}
-      </aside>
-
-      {/* Right panel — deployment info + chat + cube */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {!selected ? (
-          <div className="flex-1 flex items-center justify-center text-[#7A5C44]">
-            Create a new deployment to begin
-          </div>
-        ) : (
-          <>
-            {/* Deployment info — full width */}
-            <div className="h-[25%] border-b border-[#7A5C44]/20 overflow-y-auto p-4">
-              <h2 className="text-lg font-bold text-[#2C1A0E]">{selected.meta.name || 'New deployment'}</h2>
-              {[selected.meta.sector, selected.meta.geography, selected.meta.status].some(Boolean) && (
-                <p className="text-xs text-[#7A5C44] mt-1">
-                  {[selected.meta.sector, selected.meta.geography, selected.meta.status].filter(Boolean).join(' · ')}
-                </p>
-              )}
-              {selected.meta.summary && (
-                <p className="text-sm text-[#2C1A0E] mt-2 leading-relaxed whitespace-pre-line">
-                  {selected.meta.summary}
-                </p>
-              )}
-            </div>
-            {/* Chat + cube */}
-            <div className="h-[75%] flex overflow-hidden">
-              <div className="flex-1 min-w-0">
-                <ChatPanel
-                  messages={selected.messages}
-                  onSend={handleUserSend}
-                  onAttachFiles={handleAttachFiles}
-                  pendingAttachments={pendingAttachments[selected.id] ?? []}
-                  onRemoveAttachment={removeAttachment}
-                  loading={loading}
-                  placeholder="Describe your deployment context…"
-                />
-              </div>
-              <div className="w-[220px] flex-shrink-0 border-l border-[#7A5C44]/20 flex flex-col items-center gap-3 p-3 overflow-y-auto">
-                <div style={{ width: 160, height: 160 }}>
-                  <Cube3D cubeState={selected.cubeState} onFaceClick={handleFaceClick} size={120} />
-                </div>
-                <CubeLegend />
-                {activeFace && (
-                  <DimensionPanel
-                    code={activeFace}
-                    face={selected.cubeState[activeFace]}
-                    onClose={() => setActiveFace(null)}
-                  />
+                <button
+                  type="button"
+                  onClick={(e) => deleteDesign(e, d.id)}
+                  aria-label="Delete deployment"
+                  className="absolute top-3 right-3 text-[#7A5C44]/50 hover:text-[#D64045] opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  🗑
+                </button>
+                <div className="font-semibold text-[#2C1A0E] pr-5">{d.meta.name || 'New deployment'}</div>
+                {(d.meta.sector || d.meta.geography) && (
+                  <div className="text-xs text-[#7A5C44]">
+                    {[d.meta.sector, d.meta.geography].filter(Boolean).join(' · ')}
+                  </div>
                 )}
+                {d.meta.summary && (
+                  <p className="text-sm text-[#7A5C44] leading-relaxed line-clamp-3">{d.meta.summary}</p>
+                )}
+                <div className="text-[10px] text-[#7A5C44]/70 mt-auto pt-2">Updated {formatRelativeTime(d.updatedAt)}</div>
               </div>
-            </div>
-          </>
-        )}
-      </main>
+            ))}
+          </div>
+        </>
+      )}
     </div>
+  );
+}
+
+export default function DesignPage() {
+  return (
+    <Suspense fallback={null}>
+      <DesignPageContent />
+    </Suspense>
   );
 }
