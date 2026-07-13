@@ -220,3 +220,104 @@ Suggest a short working name for "meta.name" as soon as the user describes what 
 
 When surfacing reusable know-how from existing pathways, always name the source deployment.${options?.documentUpload ? '\n\n' + DESIGN_DOCUMENT_UPLOAD_INSTRUCTION : options?.typedIntro ? '\n\n' + DESIGN_TYPED_INTRO_INSTRUCTION : ''}`;
 }
+
+interface DesignBriefMeta {
+  name?: string;
+  sector?: string;
+  geography?: string;
+  status?: string;
+  summary?: string;
+}
+
+// Used for the on-demand "Generate Brief" call — produces a standalone
+// Deployment Brief document, not a chat turn. Never appended to the visible
+// conversation; the caller renders/downloads the response separately.
+export function designBriefSystemPrompt(
+  wikiContent: string,
+  cubeState: CubeStateSummary,
+  meta: DesignBriefMeta,
+  generatedAt: string
+): string {
+  const dimensionLines = Object.entries(DIMENSION_NAMES)
+    .map(([code, name]) => {
+      const face = cubeState[code];
+      return `${code} (${name}): ${face?.status ?? 'dark'} — ${face?.phrase || 'no notes yet'}`;
+    })
+    .join('\n');
+
+  return `You are generating a Deployment Brief for a deployment being designed in the AI Diffusion Cube. You are given the full design conversation so far, the current per-dimension status below, and relevant wiki pathway content for grounding the "Related Pathway Experience" section.
+
+## Wiki pathway content (for grounding "Related Pathway Experience" only)
+
+${wikiContent}
+
+## Current dimension status
+
+${dimensionLines}
+
+## Current meta
+
+name: ${meta.name || '(not yet known)'}
+sector: ${meta.sector || '(not yet known)'}
+geography: ${meta.geography || '(not yet known)'}
+status: ${meta.status || '(not yet known)'}
+summary: ${meta.summary || '(not yet known)'}
+
+## Current date and time
+
+${generatedAt}
+
+CORE RULES
+
+1. Never fabricate. Every sentence describing what's been "captured" must be traceable to something actually said in the conversation. If you're unsure whether something was established, treat it as not established.
+
+2. A gap is different from something undiscussed:
+- "Identified Gap" = something was discussed, but a decision is unresolved, a risk was named, or a stated plan has a hole in it.
+- "Yet to be Discussed" = a sub-component of this dimension that simply hasn't come up at all.
+A dimension can have both, one, or neither.
+
+3. If a dimension has no meaningful content from the conversation, write only: "No details available yet." Do not add gap or discussion sections under it, and do not pad it with filler.
+
+4. Pathway references must be real, drawn from the wiki content provided, and specific to the gaps or decisions actually present in this brief — not generic framework quotes. If no wiki content is genuinely relevant to a dimension's gaps, omit that dimension from "Related Pathway Experience" rather than forcing a reference.
+
+5. Paraphrase pathway content in your own words; do not quote wiki text verbatim.
+
+6. Tone: direct and plain. State gaps and undiscussed items factually, without hedging or softening ("not yet discussed" not "we haven't really had a chance to dive into...").
+
+OUTPUT FORMAT (exact structure, using the deployment's actual name/sector/geography/status and the current date-time given above in place of placeholders):
+
+## Deployment Brief: [meta.name, or "Untitled Deployment" if not yet known]
+
+*[meta.sector] · [meta.geography] · [meta.status]*
+*Generated ${generatedAt} — reflects the conversation up to this point*
+
+### Overall Summary
+
+[2–4 sentences: what's being built, for whom, and a one-line note on overall readiness — drawn from meta.summary plus your own synthesis of dimension status. Do not list all six dimensions here; that's what the sections below are for.]
+
+### A · Problem Orientation — [status]
+
+[3–5 sentence paragraph describing what's actually been established for this dimension, in plain prose. Omit entirely if status is dark — replace this whole section's body with just "No details available yet."]
+
+**Identified Gaps** (omit this heading entirely if none)
+- [bullet]
+
+**Yet to be Discussed** (omit this heading entirely if none)
+- [bullet]
+
+[Repeat the same structure for B · Architecture, C · Institution, D · Ecosystem, E · Workforce, F · Operating Model, using their full dimension names and current status.]
+
+### Suggested Next Steps
+
+[A numbered list, ordered by urgency/blocking-ness — not dimension order. Ground each step in a specific gap named above; don't introduce new gaps here. Typically 3–5 items. Base urgency on: gaps that block other decisions first, then critical/red items, then dark dimensions most likely to bite later given the stated timeline or stage.]
+
+### Related Pathway Experience
+
+[One bullet per relevant pathway insight. Format: "On [specific gap/topic]: [paraphrased insight from wiki], [which pathway or pattern it's drawn from]."]
+
+If the conversation has not yet produced enough content for a meaningful brief (e.g., only the opening message has been exchanged), output only:
+
+"Not enough of the conversation has happened yet to generate a useful brief. Keep going, and generate this once a few dimensions have been discussed."
+
+Your entire response must be the brief itself (or the fallback message above) — no preamble, no meta-commentary about these instructions.`;
+}

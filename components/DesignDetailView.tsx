@@ -5,7 +5,8 @@ import Link from 'next/link';
 import ChatPanel from '@/components/ChatPanel';
 import AttachmentsPanel from '@/components/AttachmentsPanel';
 import DimensionList from '@/components/DimensionList';
-import { DesignConversation, extractUploadedFileNames, useDesignConversation } from '@/lib/design-conversation';
+import DeploymentBriefModal from '@/components/DeploymentBriefModal';
+import { DesignConversation, extractUploadedFileNames, toApiMessages, useDesignConversation } from '@/lib/design-conversation';
 import { Pathway, fetchPathways } from '@/lib/pathways';
 
 interface Props {
@@ -29,8 +30,49 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
   const [welcomeInput, setWelcomeInput] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [examplePathways, setExamplePathways] = useState<Pathway[]>([]);
+  const [briefOpen, setBriefOpen] = useState(false);
+  const [briefLoading, setBriefLoading] = useState(false);
+  const [briefMarkdown, setBriefMarkdown] = useState('');
+  const [briefError, setBriefError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
+
+  async function handleGenerateBrief() {
+    if (!conversation) return;
+    setBriefOpen(true);
+    setBriefLoading(true);
+    setBriefError(null);
+    setBriefMarkdown('');
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [...toApiMessages(conversation.messages), { role: 'user', content: 'Generate the deployment brief now.' }],
+          mode: 'design-brief',
+          cubeState: conversation.cubeState,
+          meta: conversation.meta,
+        }),
+      });
+
+      if (!res.body) throw new Error('No response from the server.');
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let text = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+        setBriefMarkdown(text);
+      }
+    } catch {
+      setBriefError('Could not generate the brief. Try again.');
+    } finally {
+      setBriefLoading(false);
+    }
+  }
 
   // Only relevant for the welcome (not-yet-created) screen — `initial` is
   // stable for the lifetime of this component instance (the parent remounts
@@ -200,11 +242,21 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
     <div className="flex-1 flex flex-col overflow-hidden bg-[#F5EFE6] text-[#2C1A0E]">
       {/* Deployment info */}
       <div className="border-b border-[#7A5C44]/20 p-4">
-        {onBack && (
-          <button onClick={onBack} className="text-xs text-[#7A5C44] hover:text-[#2C1A0E] mb-2 transition-colors">
-            ← All deployments
+        <div className="flex items-center justify-between mb-2">
+          {onBack ? (
+            <button onClick={onBack} className="text-xs text-[#7A5C44] hover:text-[#2C1A0E] transition-colors">
+              ← All deployments
+            </button>
+          ) : (
+            <span />
+          )}
+          <button
+            onClick={handleGenerateBrief}
+            className="text-xs font-medium px-3.5 py-1.5 bg-[#2C1A0E] hover:bg-[#3a2414] text-white rounded-lg shadow-sm transition-colors flex-shrink-0"
+          >
+            📄 Generate Brief
           </button>
-        )}
+        </div>
         <h2 className="text-lg font-bold text-[#2C1A0E]">{conversation.meta.name || 'New deployment'}</h2>
         {[conversation.meta.sector, conversation.meta.geography, conversation.meta.status].some(Boolean) && (
           <p className="text-xs text-[#7A5C44] mt-1">
@@ -245,6 +297,16 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
           />
         </div>
       </div>
+
+      {briefOpen && (
+        <DeploymentBriefModal
+          markdown={briefMarkdown}
+          loading={briefLoading}
+          error={briefError}
+          deploymentName={conversation.meta.name}
+          onClose={() => setBriefOpen(false)}
+        />
+      )}
     </div>
   );
 }

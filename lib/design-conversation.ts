@@ -95,6 +95,25 @@ export function rowToConversation(row: DesignRow): DesignConversation {
   };
 }
 
+// Converts our Message[] into the Anthropic content shape, expanding any
+// attached images into content blocks — shared by the main chat turn and the
+// one-off "Generate Brief" call so they build requests identically.
+export function toApiMessages(messages: Message[]) {
+  return messages.map(({ role, content, images }) => ({
+    role,
+    content:
+      images && images.length > 0
+        ? [
+            { type: 'text', text: content },
+            ...images.map((img) => ({
+              type: 'image',
+              source: { type: 'base64', media_type: img.mediaType, data: img.base64 },
+            })),
+          ]
+        : content,
+  }));
+}
+
 interface ParsedCubeUpdate {
   cube: Record<string, FaceState>;
   meta?: Partial<DesignMeta>;
@@ -173,19 +192,7 @@ export function useDesignConversation({ initial, onCreated, onChange }: UseDesig
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: next.map(({ role, content, images }) => ({
-            role,
-            content:
-              images && images.length > 0
-                ? [
-                    { type: 'text', text: content },
-                    ...images.map((img) => ({
-                      type: 'image',
-                      source: { type: 'base64', media_type: img.mediaType, data: img.base64 },
-                    })),
-                  ]
-                : content,
-          })),
+          messages: toApiMessages(next),
           mode: 'design',
           documentUpload: opts?.documentUpload,
           typedIntro: opts?.typedIntro,

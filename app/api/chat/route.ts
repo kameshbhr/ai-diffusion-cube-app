@@ -1,23 +1,33 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { loadWikiContext } from '@/lib/wiki-loader';
-import { exploreSystemPrompt, exploreInitSystemPrompt, explorePathwayCopySystemPrompt, designSystemPrompt } from '@/lib/system-prompts';
+import {
+  exploreSystemPrompt,
+  exploreInitSystemPrompt,
+  explorePathwayCopySystemPrompt,
+  designSystemPrompt,
+  designBriefSystemPrompt,
+} from '@/lib/system-prompts';
 import { logConversation } from '@/lib/logger';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export async function POST(req: Request) {
-  const { messages, mode, pathwaySlug, cubeState, documentUpload, typedIntro } = await req.json();
+  const { messages, mode, pathwaySlug, cubeState, documentUpload, typedIntro, meta } = await req.json();
 
   const wikiContent = await loadWikiContext(pathwaySlug);
   let systemPrompt: string;
   if (mode === 'design') systemPrompt = designSystemPrompt(wikiContent, { documentUpload, typedIntro });
+  else if (mode === 'design-brief') {
+    const generatedAt = new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
+    systemPrompt = designBriefSystemPrompt(wikiContent, cubeState ?? {}, meta ?? {}, generatedAt);
+  }
   else if (mode === 'explore-init') systemPrompt = exploreInitSystemPrompt(wikiContent);
   else if (mode === 'explore-copy') systemPrompt = explorePathwayCopySystemPrompt(wikiContent);
   else systemPrompt = exploreSystemPrompt(wikiContent, cubeState ?? undefined);
 
   const stream = await anthropic.messages.stream({
     model: 'claude-sonnet-4-6',
-    max_tokens: 2048,
+    max_tokens: mode === 'design-brief' ? 4096 : 2048,
     system: systemPrompt,
     messages,
   });
