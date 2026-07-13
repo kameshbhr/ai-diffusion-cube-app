@@ -8,6 +8,7 @@ import {
   designBriefSystemPrompt,
 } from '@/lib/system-prompts';
 import { logConversation } from '@/lib/logger';
+import { hashContent, getPathwayCache, upsertPathwayCubeState, upsertPathwayCopy } from '@/lib/pathway-cache';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -15,6 +16,29 @@ export async function POST(req: Request) {
   const { messages, mode, pathwaySlug, cubeState, documentUpload, typedIntro, meta } = await req.json();
 
   const wikiContent = await loadWikiContext(pathwaySlug);
+
+  // Shared cache for the two silent, per-pathway calls (explore-init's
+  // dimension scoring, explore-copy's card/summary) — every user opening the
+  // same pathway would otherwise re-trigger identical Claude calls for
+  // identical wiki content. Keyed by a hash of that content, so a wiki edit
+  // invalidates it automatically.
+  if ((mode === 'explore-init' || mode === 'explore-copy') && pathwaySlug) {
+    const contentHash = hashContent(wikiContent);
+    const cached = await getPathwayCache(pathwaySlug, contentHash);
+
+    if (mode === 'explore-init' && cached?.cube_state) {
+      return new Response(`<cube_update>\n${JSON.stringify(cached.cube_state)}\n</cube_update>`, {
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      });
+    }
+    if (mode === 'explore-copy' && cached?.card && cached?.summary) {
+      return new Response(
+        `<pathway_copy>\n${JSON.stringify({ card: cached.card, summary: cached.summary })}\n</pathway_copy>`,
+        { headers: { 'Content-Type': 'text/plain; charset=utf-8' } }
+      );
+    }
+  }
+
   let systemPrompt: string;
   if (mode === 'design') systemPrompt = designSystemPrompt(wikiContent, { documentUpload, typedIntro });
   else if (mode === 'design-brief') {
@@ -49,6 +73,32 @@ export async function POST(req: Request) {
 
       // Fire-and-forget — never blocks the response
       logConversation({ mode, pathwaySlug, messages, response: fullResponse });
+
+      if (pathwaySlug && (mode === 'explore-init' || mode === 'explore-copy')) {
+        const contentHash = hashContent(wikiContent);
+        if (mode === 'explore-init') {
+          const match = fullResponse.match(/<cube_update>([\s\S]*?)<\/cube_update>/);
+          if (match) {
+            try {
+              void upsertPathwayCubeState(pathwaySlug, contentHash, JSON.parse(match[1]));
+            } catch {
+              // Malformed model output — nothing to cache, next request just regenerates.
+            }
+          }
+        } else {
+          const match = fullResponse.match(/<pathway_copy>([\s\S]*?)<\/pathway_copy>/);
+          if (match) {
+            try {
+              const parsed = JSON.parse(match[1]);
+              if (parsed.card && parsed.summary) {
+                void upsertPathwayCopy(pathwaySlug, contentHash, parsed.card, parsed.summary);
+              }
+            } catch {
+              // Malformed model output — nothing to cache, next request just regenerates.
+            }
+          }
+        }
+      }
     },
   });
 

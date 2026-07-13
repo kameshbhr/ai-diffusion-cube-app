@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { CubeState, FaceState } from '@/components/Cube3D';
 import ChatPanel, { Message } from '@/components/ChatPanel';
 import DimensionList from '@/components/DimensionList';
-import { Pathway, fetchPathways } from '@/lib/pathways';
+import { Pathway, fetchPathways, fetchPathwayMarkdown } from '@/lib/pathways';
 
 interface PathwayMeta {
   sector: string;
@@ -192,9 +192,7 @@ function ExplorePageContent() {
     messagesRef.current = [];
     isInit.current = true;
 
-    const base = process.env.NEXT_PUBLIC_GITHUB_WIKI_BASE_URL ?? '';
-    fetch(`${base}/wiki/pathways/${pathway.slug}.md`)
-      .then((r) => r.text())
+    fetchPathwayMarkdown(pathway.slug)
       .then((md) => setMeta(parsePathwayMeta(md)))
       .catch(() => {});
 

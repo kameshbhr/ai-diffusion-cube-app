@@ -43,6 +43,19 @@ export const DIMENSION_NAMES: Record<string, string> = {
   F: 'Operating Model',
 };
 
+// The six-dimension framework is internal (see designSystemPrompt) — never
+// surfaced to the user. Clicking a dimension shortcut in the UI sends one of
+// these instead of the internal label, so the request reads like something a
+// person would actually say.
+const DIMENSION_TOPIC_PROMPTS: Record<string, string> = {
+  A: "I want to talk through the problem we're solving and who it's for.",
+  B: "I want to dig into how we're planning to build this.",
+  C: "I want to talk about who's driving this internally and who owns it.",
+  D: 'I want to talk about who else needs to be involved to make this work.',
+  E: "I want to talk about the people who'll actually use or run this day to day.",
+  F: 'I want to talk about how this keeps running after launch.',
+};
+
 export const INITIAL_MESSAGE =
   "Hi, I'm Jude. I'm here to help you design your AI deployment across six dimensions — from problem framing to operating model.\n\nYou can start in two ways:\n📄 Upload a document or image — a concept note, proposal, slide deck, spreadsheet, or a photo of one. I'll read it and get us started.\n💬 Just tell me — describe what you're trying to do, the problem you're solving, and who it's for.";
 
@@ -334,7 +347,7 @@ export function useDesignConversation({ initial, onCreated, onChange }: UseDesig
   );
 
   function handleDimensionClick(code: string) {
-    void handleUserSend(`Let's focus on the ${DIMENSION_NAMES[code]} dimension next.`);
+    void handleUserSend(DIMENSION_TOPIC_PROMPTS[code]);
   }
 
   function handleAttachFiles(files: File[]) {

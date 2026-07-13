@@ -3,8 +3,9 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import DesignDetailView from '@/components/DesignDetailView';
-import { DesignConversation, rowToConversation } from '@/lib/design-conversation';
+import { DesignConversation } from '@/lib/design-conversation';
 import { createClient } from '@/lib/supabase/client';
+import { fetchDesignsList, setDesignsListCache } from '@/lib/designs-cache';
 
 function formatRelativeTime(iso: string): string {
   const minutes = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
@@ -31,24 +32,17 @@ function DesignPageContent() {
 
   useEffect(() => {
     let cancelled = false;
-    async function load() {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from('designs')
-        .select('*')
-        .order('updated_at', { ascending: false });
-
-      if (cancelled) return;
-      if (error) {
+    fetchDesignsList()
+      .then((list) => {
+        if (cancelled) return;
+        setDesigns(list);
+        setDesignsLoaded(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
         setLoadError('Could not load your saved deployments.');
         setDesignsLoaded(true);
-        return;
-      }
-
-      setDesigns((data as Parameters<typeof rowToConversation>[0][]).map(rowToConversation));
-      setDesignsLoaded(true);
-    }
-    load();
+      });
     return () => {
       cancelled = true;
     };
@@ -76,7 +70,11 @@ function DesignPageContent() {
       setLoadError('Could not delete that deployment. Try again.');
       return;
     }
-    setDesigns((prev) => prev.filter((d) => d.id !== id));
+    setDesigns((prev) => {
+      const next = prev.filter((d) => d.id !== id);
+      setDesignsListCache(next);
+      return next;
+    });
   }
 
   if (selection) {
@@ -86,8 +84,20 @@ function DesignPageContent() {
         key={selection}
         initial={existing}
         onBack={() => setSelection(null)}
-        onCreated={(c) => setDesigns((prev) => [c, ...prev])}
-        onChange={(c) => setDesigns((prev) => prev.map((d) => (d.id === c.id ? c : d)))}
+        onCreated={(c) =>
+          setDesigns((prev) => {
+            const next = [c, ...prev];
+            setDesignsListCache(next);
+            return next;
+          })
+        }
+        onChange={(c) =>
+          setDesigns((prev) => {
+            const next = prev.map((d) => (d.id === c.id ? c : d));
+            setDesignsListCache(next);
+            return next;
+          })
+        }
       />
     );
   }
