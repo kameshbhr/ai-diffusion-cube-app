@@ -1,11 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { loadWikiContext } from '@/lib/wiki-loader';
+import { loadWikiContext, loadFrameworkContent } from '@/lib/wiki-loader';
 import {
   exploreSystemPrompt,
   exploreInitSystemPrompt,
   explorePathwayCopySystemPrompt,
   designSystemPrompt,
-  designBriefSystemPrompt,
+  adoptionPlanSystemPrompt,
 } from '@/lib/system-prompts';
 import { logConversation } from '@/lib/logger';
 import { hashContent, getPathwayCache, upsertPathwayCubeState, upsertPathwayCopy } from '@/lib/pathway-cache';
@@ -13,17 +13,21 @@ import { hashContent, getPathwayCache, upsertPathwayCubeState, upsertPathwayCopy
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export async function POST(req: Request) {
-  const { messages, mode, pathwaySlug, cubeState, documentUpload, typedIntro, meta } = await req.json();
+  const { messages, mode, pathwaySlug, cubeState, meta } = await req.json();
 
-  const wikiContent = await loadWikiContext(pathwaySlug);
+  const [wikiContent, frameworkContent] = await Promise.all([
+    loadWikiContext(pathwaySlug),
+    loadFrameworkContent(),
+  ]);
 
   // Shared cache for the two silent, per-pathway calls (explore-init's
   // dimension scoring, explore-copy's card/summary) — every user opening the
   // same pathway would otherwise re-trigger identical Claude calls for
-  // identical wiki content. Keyed by a hash of that content, so a wiki edit
-  // invalidates it automatically.
+  // identical wiki content. Keyed by a hash of that content (plus the
+  // framework doc, which explore-init's scoring also depends on), so a wiki
+  // or framework edit invalidates it automatically.
   if ((mode === 'explore-init' || mode === 'explore-copy') && pathwaySlug) {
-    const contentHash = hashContent(wikiContent);
+    const contentHash = hashContent(wikiContent + '\n---\n' + frameworkContent);
     const cached = await getPathwayCache(pathwaySlug, contentHash);
 
     if (mode === 'explore-init' && cached?.cube_state) {
@@ -40,18 +44,18 @@ export async function POST(req: Request) {
   }
 
   let systemPrompt: string;
-  if (mode === 'design') systemPrompt = designSystemPrompt(wikiContent, { documentUpload, typedIntro });
-  else if (mode === 'design-brief') {
+  if (mode === 'design') systemPrompt = designSystemPrompt(wikiContent, frameworkContent);
+  else if (mode === 'design-adoption-plan') {
     const generatedAt = new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
-    systemPrompt = designBriefSystemPrompt(wikiContent, cubeState ?? {}, meta ?? {}, generatedAt);
+    systemPrompt = adoptionPlanSystemPrompt(wikiContent, frameworkContent, cubeState ?? {}, meta ?? {}, generatedAt);
   }
-  else if (mode === 'explore-init') systemPrompt = exploreInitSystemPrompt(wikiContent);
+  else if (mode === 'explore-init') systemPrompt = exploreInitSystemPrompt(wikiContent, frameworkContent);
   else if (mode === 'explore-copy') systemPrompt = explorePathwayCopySystemPrompt(wikiContent);
-  else systemPrompt = exploreSystemPrompt(wikiContent, cubeState ?? undefined);
+  else systemPrompt = exploreSystemPrompt(wikiContent, frameworkContent, cubeState ?? undefined);
 
   const stream = await anthropic.messages.stream({
     model: 'claude-sonnet-4-6',
-    max_tokens: mode === 'design-brief' ? 4096 : 2048,
+    max_tokens: mode === 'design-adoption-plan' ? 4096 : 2048,
     system: systemPrompt,
     messages,
   });
@@ -75,7 +79,7 @@ export async function POST(req: Request) {
       logConversation({ mode, pathwaySlug, messages, response: fullResponse });
 
       if (pathwaySlug && (mode === 'explore-init' || mode === 'explore-copy')) {
-        const contentHash = hashContent(wikiContent);
+        const contentHash = hashContent(wikiContent + '\n---\n' + frameworkContent);
         if (mode === 'explore-init') {
           const match = fullResponse.match(/<cube_update>([\s\S]*?)<\/cube_update>/);
           if (match) {

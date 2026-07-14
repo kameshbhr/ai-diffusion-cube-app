@@ -1,9 +1,9 @@
-// A small, purpose-built parser for the Deployment Brief's markdown subset
-// (##/### headings, *italic* lines, **bold** runs, bullet and numbered
-// lists) — shared by the on-screen renderer and the PDF export so both stay
-// in sync with a single parse.
+// A small, purpose-built parser for the Adoption Journey Plan's markdown
+// subset (##/### headings, *italic* lines, **bold** runs, bullet and
+// numbered lists) — shared by the on-screen renderer and the PDF export so
+// both stay in sync with a single parse.
 
-export type BriefBlock =
+export type PlanBlock =
   | { type: 'h2'; text: string }
   | { type: 'h3'; text: string }
   | { type: 'italic'; text: string }
@@ -23,8 +23,8 @@ function isBlockStart(line: string): boolean {
   );
 }
 
-export function parseBriefMarkdown(markdown: string): BriefBlock[] {
-  const blocks: BriefBlock[] = [];
+export function parsePlanMarkdown(markdown: string): PlanBlock[] {
+  const blocks: PlanBlock[] = [];
   const lines = markdown.split('\n');
   let i = 0;
 

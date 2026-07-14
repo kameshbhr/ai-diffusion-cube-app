@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState } from 'react';
-import { CubeState, FaceState } from '@/components/Cube3D';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { CubeState, DARK_CUBE, DIMENSION_NAMES, FaceState } from '@/lib/dimensions';
 import { Message } from '@/components/ChatPanel';
 import { createClient } from '@/lib/supabase/client';
 import { extractTextFromFile, fileToImageBlock, getFileExtension, isImageFile } from '@/lib/extract-text';
@@ -14,9 +14,7 @@ export interface DesignMeta {
 
 export const EMPTY_META: DesignMeta = { name: '', sector: '', geography: '', status: '', summary: '' };
 
-export const DARK_CUBE: CubeState = Object.fromEntries(
-  ['A', 'B', 'C', 'D', 'E', 'F'].map((c) => [c, { status: 'dark', phrase: '' } as FaceState])
-);
+export { DARK_CUBE };
 
 const UPLOAD_LINE = /(?:📄|🖼️)\s*Uploaded\s+\*\*(.+?)\*\*/g;
 
@@ -34,30 +32,24 @@ export function extractUploadedFileNames(messages: Message[]): string[] {
   return names;
 }
 
-export const DIMENSION_NAMES: Record<string, string> = {
-  A: 'Problem Orientation',
-  B: 'Architecture',
-  C: 'Institution',
-  D: 'Ecosystem',
-  E: 'Workforce',
-  F: 'Operating Model',
-};
+export { DIMENSION_NAMES };
 
-// The six-dimension framework is internal (see designSystemPrompt) — never
+// The dimensions framework is internal (see designSystemPrompt) — never
 // surfaced to the user. Clicking a dimension shortcut in the UI sends one of
 // these instead of the internal label, so the request reads like something a
 // person would actually say.
 const DIMENSION_TOPIC_PROMPTS: Record<string, string> = {
   A: "I want to talk through the problem we're solving and who it's for.",
   B: "I want to dig into how we're planning to build this.",
-  C: "I want to talk about who's driving this internally and who owns it.",
-  D: 'I want to talk about who else needs to be involved to make this work.',
-  E: "I want to talk about the people who'll actually use or run this day to day.",
-  F: 'I want to talk about how this keeps running after launch.',
+  C: "I want to talk about the data we'll need and how we'll manage it.",
+  D: "I want to talk about who's driving this internally and who owns it.",
+  E: 'I want to talk about who else needs to be involved to make this work.',
+  F: "I want to talk about the people who'll actually use or run this day to day.",
+  G: 'I want to talk about how this keeps running after launch.',
 };
 
 export const INITIAL_MESSAGE =
-  "Hi, I'm Jude. I'm here to help you design your AI deployment across six dimensions — from problem framing to operating model.\n\nYou can start in two ways:\n📄 Upload a document or image — a concept note, proposal, slide deck, spreadsheet, or a photo of one. I'll read it and get us started.\n💬 Just tell me — describe what you're trying to do, the problem you're solving, and who it's for.";
+  "Hi, I'm Jude. I'm here to help you design your AI deployment — from problem framing to operating model.\n\nYou can start in two ways:\n📄 Upload a document or image — a concept note, proposal, slide deck, spreadsheet, or a photo of one. I'll read it and get us started.\n💬 Just tell me — describe what you're trying to do, the problem you're solving, and who it's for.";
 
 // A staged attachment carries its extracted payload once processed, so it can
 // be folded into the actual API message once the user presses Enter.
@@ -76,23 +68,18 @@ export interface DesignConversation {
   meta: DesignMeta;
   cubeState: CubeState;
   messages: Message[];
-  // Counts down the follow-up turns (confirm/correct, then guidance-vs-needs)
-  // that must still carry the document-review instruction after an upload.
-  documentReviewTurnsLeft: number;
-  // Counts down the one follow-up turn (guidance-vs-needs) that must still
-  // carry the typed-intro instruction after the user's first typed message.
-  typedIntroTurnsLeft: number;
   updatedAt: string;
 }
 
 // Shape of a row in the `designs` table (see supabase/migrations/0001_designs.sql).
+// The table still has document_review_turns_left/typed_intro_turns_left
+// columns from the old turn-counting flow — no longer read or written here,
+// left in place as inert defaults rather than a schema migration.
 interface DesignRow {
   id: string;
   meta: DesignMeta;
   cube_state: CubeState;
   messages: Message[];
-  document_review_turns_left: number;
-  typed_intro_turns_left: number;
   updated_at: string;
 }
 
@@ -102,15 +89,13 @@ export function rowToConversation(row: DesignRow): DesignConversation {
     meta: row.meta ?? EMPTY_META,
     cubeState: row.cube_state ?? DARK_CUBE,
     messages: row.messages ?? [],
-    documentReviewTurnsLeft: row.document_review_turns_left ?? 0,
-    typedIntroTurnsLeft: row.typed_intro_turns_left ?? 0,
     updatedAt: row.updated_at,
   };
 }
 
 // Converts our Message[] into the Anthropic content shape, expanding any
 // attached images into content blocks — shared by the main chat turn and the
-// one-off "Generate Brief" call so they build requests identically.
+// one-off "Generate Adoption Plan" call so they build requests identically.
 export function toApiMessages(messages: Message[]) {
   return messages.map(({ role, content, images }) => ({
     role,
@@ -165,18 +150,28 @@ export function useDesignConversation({ initial, onCreated, onChange }: UseDesig
   const [loading, setLoading] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<StagedAttachment[]>([]);
 
-  const update = useCallback(
-    (updater: (c: DesignConversation) => DesignConversation) => {
-      setConversation((prev) => {
-        if (!prev) return prev;
-        const next = updater(prev);
-        conversationRef.current = next;
-        onChange?.(next);
-        return next;
-      });
-    },
-    [onChange]
-  );
+  // Updater functions passed to setState must be pure — calling onChange (which
+  // triggers the parent's setDesigns) from inside one is what produces React's
+  // "Cannot update a component while rendering a different component"
+  // warning. Instead, keep the latest onChange in a ref and fire it from an
+  // effect once `conversation` has actually changed, after commit.
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  useEffect(() => {
+    if (conversation) onChangeRef.current?.(conversation);
+  }, [conversation]);
+
+  const update = useCallback((updater: (c: DesignConversation) => DesignConversation) => {
+    setConversation((prev) => {
+      if (!prev) return prev;
+      const next = updater(prev);
+      conversationRef.current = next;
+      return next;
+    });
+  }, []);
 
   async function persist(c: DesignConversation) {
     const updatedAt = new Date().toISOString();
@@ -187,8 +182,6 @@ export function useDesignConversation({ initial, onCreated, onChange }: UseDesig
         meta: c.meta,
         cube_state: c.cubeState,
         messages: c.messages,
-        document_review_turns_left: c.documentReviewTurnsLeft,
-        typed_intro_turns_left: c.typedIntroTurnsLeft,
         updated_at: updatedAt,
       })
       .eq('id', c.id);
@@ -196,7 +189,7 @@ export function useDesignConversation({ initial, onCreated, onChange }: UseDesig
   }
 
   const sendMessage = useCallback(
-    async (id: string, history: Message[], userMessage: Message, opts?: { documentUpload?: boolean; typedIntro?: boolean }) => {
+    async (id: string, history: Message[], userMessage: Message) => {
       const next: Message[] = [...history, userMessage];
       update((c) => ({ ...c, messages: next }));
       setLoading(true);
@@ -207,8 +200,6 @@ export function useDesignConversation({ initial, onCreated, onChange }: UseDesig
         body: JSON.stringify({
           messages: toApiMessages(next),
           mode: 'design',
-          documentUpload: opts?.documentUpload,
-          typedIntro: opts?.typedIntro,
         }),
       });
 
@@ -293,9 +284,6 @@ export function useDesignConversation({ initial, onCreated, onChange }: UseDesig
       const readyAttachments = pendingAttachments.filter((a) => a.state === 'ready');
       const c = await ensureCreated();
 
-      // Attaching a file always starts a fresh document-review sequence for
-      // this turn, same as a bare upload used to — regardless of any typed-intro
-      // sequencing already in progress.
       if (readyAttachments.length > 0) {
         const images = readyAttachments.filter((a) => a.kind === 'image').map((a) => a.image!);
         const textParts = readyAttachments
@@ -311,39 +299,19 @@ export function useDesignConversation({ initial, onCreated, onChange }: UseDesig
         ];
 
         setPendingAttachments([]);
-        update((cur) => ({ ...cur, documentReviewTurnsLeft: 2 }));
 
-        sendMessage(
-          c.id,
-          c.messages,
-          { role: 'user', content, displayContent: displayLines.join('\n'), images: images.length ? images : undefined },
-          { documentUpload: true }
-        );
+        sendMessage(c.id, c.messages, {
+          role: 'user',
+          content,
+          displayContent: displayLines.join('\n'),
+          images: images.length ? images : undefined,
+        });
         return;
       }
 
-      const continuesDocReview = c.documentReviewTurnsLeft > 0;
-      const continuesTypedIntro = !continuesDocReview && c.typedIntroTurnsLeft > 0;
-      // The very first message of a design (right after the greeting) starts the
-      // typed-intro sequence, unless a document upload already claimed that role.
-      const startsTypedIntro = !continuesDocReview && !continuesTypedIntro && c.messages.length === 1;
-
-      if (continuesDocReview) {
-        update((cur) => ({ ...cur, documentReviewTurnsLeft: cur.documentReviewTurnsLeft - 1 }));
-      } else if (continuesTypedIntro) {
-        update((cur) => ({ ...cur, typedIntroTurnsLeft: cur.typedIntroTurnsLeft - 1 }));
-      } else if (startsTypedIntro) {
-        update((cur) => ({ ...cur, typedIntroTurnsLeft: 1 }));
-      }
-
-      sendMessage(
-        c.id,
-        c.messages,
-        { role: 'user', content: text },
-        { documentUpload: continuesDocReview, typedIntro: continuesTypedIntro || startsTypedIntro }
-      );
+      sendMessage(c.id, c.messages, { role: 'user', content: text });
     },
-    [pendingAttachments, sendMessage, update]
+    [pendingAttachments, sendMessage]
   );
 
   function handleDimensionClick(code: string) {

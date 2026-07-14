@@ -1,22 +1,6 @@
 'use client';
 
-import { CubeState, FaceStatus } from '@/components/Cube3D';
-
-const DIMENSION_NAMES: Record<string, string> = {
-  A: 'Problem Orientation',
-  B: 'Architecture',
-  C: 'Institution',
-  D: 'Ecosystem',
-  E: 'Workforce',
-  F: 'Operating Model',
-};
-
-const STATUS_COLORS: Record<FaceStatus, string> = {
-  dark: '#1A3A5C',
-  green: '#3D8B37',
-  amber: '#E8A838',
-  red: '#D64045',
-};
+import { CubeState, DIMENSION_CODES, DIMENSION_NAMES, STATUS_COLORS } from '@/lib/dimensions';
 
 interface Props {
   cubeState: CubeState;
@@ -27,7 +11,7 @@ interface Props {
 export default function DimensionList({ cubeState, onSelect, disabled }: Props) {
   return (
     <div className="flex flex-wrap gap-2">
-      {Object.keys(DIMENSION_NAMES).map((code) => {
+      {DIMENSION_CODES.map((code) => {
         const face = cubeState[code];
         const status = face?.status ?? 'dark';
         return (

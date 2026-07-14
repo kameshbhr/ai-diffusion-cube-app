@@ -5,7 +5,7 @@ import Link from 'next/link';
 import ChatPanel from '@/components/ChatPanel';
 import AttachmentsPanel from '@/components/AttachmentsPanel';
 import DimensionList from '@/components/DimensionList';
-import DeploymentBriefModal from '@/components/DeploymentBriefModal';
+import AdoptionPlanModal from '@/components/AdoptionPlanModal';
 import { DesignConversation, extractUploadedFileNames, toApiMessages, useDesignConversation } from '@/lib/design-conversation';
 import { Pathway, fetchPathways } from '@/lib/pathways';
 
@@ -30,27 +30,27 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
   const [welcomeInput, setWelcomeInput] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [examplePathways, setExamplePathways] = useState<Pathway[]>([]);
-  const [briefOpen, setBriefOpen] = useState(false);
-  const [briefLoading, setBriefLoading] = useState(false);
-  const [briefMarkdown, setBriefMarkdown] = useState('');
-  const [briefError, setBriefError] = useState<string | null>(null);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planMarkdown, setPlanMarkdown] = useState('');
+  const [planError, setPlanError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
 
-  async function handleGenerateBrief() {
+  async function handleGenerateAdoptionPlan() {
     if (!conversation) return;
-    setBriefOpen(true);
-    setBriefLoading(true);
-    setBriefError(null);
-    setBriefMarkdown('');
+    setPlanOpen(true);
+    setPlanLoading(true);
+    setPlanError(null);
+    setPlanMarkdown('');
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [...toApiMessages(conversation.messages), { role: 'user', content: 'Generate the deployment brief now.' }],
-          mode: 'design-brief',
+          messages: [...toApiMessages(conversation.messages), { role: 'user', content: 'Generate the adoption journey plan now.' }],
+          mode: 'design-adoption-plan',
           cubeState: conversation.cubeState,
           meta: conversation.meta,
         }),
@@ -65,12 +65,12 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
         const { done, value } = await reader.read();
         if (done) break;
         text += decoder.decode(value, { stream: true });
-        setBriefMarkdown(text);
+        setPlanMarkdown(text);
       }
     } catch {
-      setBriefError('Could not generate the brief. Try again.');
+      setPlanError('Could not generate the adoption plan. Try again.');
     } finally {
-      setBriefLoading(false);
+      setPlanLoading(false);
     }
   }
 
@@ -251,10 +251,10 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
             <span />
           )}
           <button
-            onClick={handleGenerateBrief}
+            onClick={handleGenerateAdoptionPlan}
             className="text-xs font-medium px-3.5 py-1.5 bg-[#2C1A0E] hover:bg-[#3a2414] text-white rounded-lg shadow-sm transition-colors flex-shrink-0"
           >
-            📄 Generate Brief
+            📄 Generate Adoption Plan
           </button>
         </div>
         <h2 className="text-lg font-bold text-[#2C1A0E]">{conversation.meta.name || 'New deployment'}</h2>
@@ -298,13 +298,13 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
         </div>
       </div>
 
-      {briefOpen && (
-        <DeploymentBriefModal
-          markdown={briefMarkdown}
-          loading={briefLoading}
-          error={briefError}
+      {planOpen && (
+        <AdoptionPlanModal
+          markdown={planMarkdown}
+          loading={planLoading}
+          error={planError}
           deploymentName={conversation.meta.name}
-          onClose={() => setBriefOpen(false)}
+          onClose={() => setPlanOpen(false)}
         />
       )}
     </div>

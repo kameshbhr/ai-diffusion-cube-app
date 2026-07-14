@@ -1,7 +1,7 @@
 'use client';
 
-import { InlineRun, parseBriefMarkdown, splitInlineBold } from '@/lib/brief-markdown';
-import { downloadBriefAsPdf } from '@/lib/brief-pdf';
+import { InlineRun, parsePlanMarkdown, splitInlineBold } from '@/lib/adoption-plan-markdown';
+import { downloadPlanAsPdf } from '@/lib/adoption-plan-pdf';
 
 interface Props {
   markdown: string;
@@ -21,19 +21,19 @@ function InlineText({ text }: { text: string }) {
   );
 }
 
-export default function DeploymentBriefModal({ markdown, loading, error, deploymentName, onClose }: Props) {
-  const blocks = parseBriefMarkdown(markdown);
+export default function AdoptionPlanModal({ markdown, loading, error, deploymentName, onClose }: Props) {
+  const blocks = parsePlanMarkdown(markdown);
 
   function handleDownload() {
     const safeName = (deploymentName || 'deployment').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-    downloadBriefAsPdf(markdown, `${safeName}-brief.pdf`);
+    downloadPlanAsPdf(markdown, `${safeName}-adoption-plan.pdf`);
   }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
       <div className="bg-[#F5EFE6] text-[#2C1A0E] rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
         <div className="flex items-center justify-between p-4 border-b border-[#7A5C44]/20 flex-shrink-0">
-          <h2 className="text-lg font-bold">Deployment Brief</h2>
+          <h2 className="text-lg font-bold">Adoption Journey Plan</h2>
           <div className="flex items-center gap-2">
             <button
               onClick={handleDownload}
@@ -56,7 +56,7 @@ export default function DeploymentBriefModal({ markdown, loading, error, deploym
           {error && <p className="text-[#D64045] text-sm">{error}</p>}
 
           {!error && blocks.length === 0 && loading && (
-            <p className="text-[#7A5C44] text-sm animate-pulse">Generating brief…</p>
+            <p className="text-[#7A5C44] text-sm animate-pulse">Generating adoption plan…</p>
           )}
 
           {!error &&

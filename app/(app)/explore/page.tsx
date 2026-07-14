@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { CubeState, FaceState } from '@/components/Cube3D';
+import { CubeState, FaceState, DARK_CUBE, DIMENSION_NAMES } from '@/lib/dimensions';
 import ChatPanel, { Message } from '@/components/ChatPanel';
 import DimensionList from '@/components/DimensionList';
 import { Pathway, fetchPathways, fetchPathwayMarkdown } from '@/lib/pathways';
@@ -26,19 +26,6 @@ function parsePathwayCopy(text: string): PathwayCopy | null {
   if (!match) return null;
   try { return JSON.parse(match[1]); } catch { return null; }
 }
-
-const DIMENSION_NAMES: Record<string, string> = {
-  A: 'Problem Orientation',
-  B: 'Architecture',
-  C: 'Institution',
-  D: 'Ecosystem',
-  E: 'Workforce',
-  F: 'Operating Model',
-};
-
-const DARK_CUBE: CubeState = Object.fromEntries(
-  ['A', 'B', 'C', 'D', 'E', 'F'].map((c) => [c, { status: 'dark', phrase: '' } as FaceState])
-);
 
 function parseCubeUpdate(text: string): Partial<CubeState> | null {
   const match = text.match(/<cube_update>([\s\S]*?)<\/cube_update>/);
@@ -200,7 +187,7 @@ function ExplorePageContent() {
       ? Promise.resolve<PathwayCopy | null>(copyCache[pathway.slug])
       : fetchPathwayCopy(pathway.slug);
 
-    const initPrompt = `Analyse the deployment "${pathway.name}" across all six dimensions (A–F) using only the wiki content provided. Set a status for each (green/amber/red/dark) and write a phrase of 5 words or fewer naming the key gap or strength. Your entire response must be a single <cube_update> block with no other text before or after it.`;
+    const initPrompt = `Analyse the deployment "${pathway.name}" across all seven dimensions of the framework using only the wiki content provided. Set a status for each (green/amber/red/dark) and write a phrase of 5 words or fewer naming the key gap or strength. Your entire response must be a single <cube_update> block with no other text before or after it.`;
     const [copy] = await Promise.all([copyPromise, sendMessage(initPrompt, [], pathway.slug, true, true)]);
     isInit.current = false;
 

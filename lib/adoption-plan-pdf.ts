@@ -1,5 +1,5 @@
 import jsPDF from 'jspdf';
-import { parseBriefMarkdown, splitInlineBold } from '@/lib/brief-markdown';
+import { parsePlanMarkdown, splitInlineBold } from '@/lib/adoption-plan-markdown';
 
 // Flattens inline **bold** markers to plain text — jsPDF's plain text() calls
 // don't support mixed bold/normal runs within a single line, so the PDF
@@ -10,7 +10,7 @@ function flatten(text: string): string {
     .join('');
 }
 
-export function downloadBriefAsPdf(markdown: string, filename: string) {
+export function downloadPlanAsPdf(markdown: string, filename: string) {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const marginX = 48;
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -37,7 +37,7 @@ export function downloadBriefAsPdf(markdown: string, filename: string) {
     y += gapAfter;
   }
 
-  for (const block of parseBriefMarkdown(markdown)) {
+  for (const block of parsePlanMarkdown(markdown)) {
     switch (block.type) {
       case 'h2':
         y += 8;

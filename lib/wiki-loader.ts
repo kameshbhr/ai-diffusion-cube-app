@@ -25,6 +25,14 @@ function parsePathwaySlugs(indexMd: string): string[] {
   return slugs;
 }
 
+// The Seven Dimensions Framework doc — dimension definitions, stages, and
+// the stage x dimension question bank. Injected into prompts instead of
+// hardcoding any of that in system-prompts.ts, so editing the wiki page is
+// the only thing needed to change the framework the app uses.
+export async function loadFrameworkContent(): Promise<string> {
+  return fetchPage('wiki/framework.md');
+}
+
 export async function loadWikiContext(pathwaySlug?: string): Promise<string> {
   const index = await fetchPage('wiki/index.md');
   const parts: string[] = [`# Wiki Index\n\n${index}`];
