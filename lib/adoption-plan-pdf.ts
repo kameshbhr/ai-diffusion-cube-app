@@ -1,5 +1,11 @@
 import jsPDF from 'jspdf';
-import { parsePlanMarkdown, splitInlineBold } from '@/lib/adoption-plan-markdown';
+import { parsePlanMarkdown, parseStatusBullet, splitInlineBold } from '@/lib/adoption-plan-markdown';
+import { STATUS_COLORS } from '@/lib/dimensions';
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
 
 // Flattens inline **bold** markers to plain text — jsPDF's plain text() calls
 // don't support mixed bold/normal runs within a single line, so the PDF
@@ -28,6 +34,7 @@ export function downloadPlanAsPdf(markdown: string, filename: string) {
   function writeLines(text: string, size: number, style: 'normal' | 'bold' | 'italic', indent: number, gapAfter: number) {
     doc.setFont('helvetica', style);
     doc.setFontSize(size);
+    doc.setTextColor(0, 0, 0);
     const lines: string[] = doc.splitTextToSize(text, maxWidth - indent);
     for (const line of lines) {
       ensureSpace(size + 4);
@@ -35,6 +42,28 @@ export function downloadPlanAsPdf(markdown: string, filename: string) {
       y += size + 4;
     }
     y += gapAfter;
+  }
+
+  // Draws a real vector-filled circle instead of relying on an emoji glyph —
+  // jsPDF's default Helvetica font doesn't reliably include color emoji, so
+  // this is how the "At a Glance" status tags actually render in the PDF.
+  function writeStatusBullet(text: string, color: string) {
+    const indent = 14;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    const lines: string[] = doc.splitTextToSize(text, maxWidth - indent);
+    const { r, g, b } = hexToRgb(color);
+    lines.forEach((line, idx) => {
+      ensureSpace(15);
+      if (idx === 0) {
+        doc.setFillColor(r, g, b);
+        doc.circle(marginX + 4, y - 3, 3, 'F');
+      }
+      doc.setTextColor(0, 0, 0);
+      doc.text(line, marginX + indent, y);
+      y += 15;
+    });
+    y += 2;
   }
 
   for (const block of parsePlanMarkdown(markdown)) {
@@ -55,7 +84,12 @@ export function downloadPlanAsPdf(markdown: string, filename: string) {
         break;
       case 'bullets':
         for (const item of block.items) {
-          writeLines(`•  ${flatten(item)}`, 11, 'normal', 8, 2);
+          const { status, text } = parseStatusBullet(item);
+          if (status) {
+            writeStatusBullet(flatten(text), STATUS_COLORS[status]);
+          } else {
+            writeLines(`•  ${flatten(item)}`, 11, 'normal', 8, 2);
+          }
         }
         y += 6;
         break;

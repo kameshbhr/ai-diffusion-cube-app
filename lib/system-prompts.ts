@@ -281,6 +281,78 @@ export function adoptionPlanSystemPrompt(
       ? `Readiness for the ${nextStage} Stage`
       : 'Readiness — Fully Scaled';
 
+  // Built here rather than left for the model to reproduce, so the snapshot
+  // always matches the real cube state exactly — a "[green]"/"[amber]"/
+  // "[red]"/"[dark]" tag per line, parsed by parseStatusBullet() and rendered
+  // as a real colored dot in both the on-screen modal and the PDF export
+  // (jsPDF's default fonts don't reliably support emoji glyphs, so this tag
+  // is drawn as a vector circle instead of relying on a Unicode character).
+  const atAGlanceLines = DIMENSIONS.map(({ code, name }) => {
+    const face = cubeState[code];
+    const status = face?.status ?? 'dark';
+    const phrase = face?.phrase || (status === 'dark' ? 'not yet discussed' : 'no notes yet');
+    return `- [${status}] ${name} — ${phrase}`;
+  }).join('\n');
+
+  // Grouping by status instead of fixed A–G order — the reader gets "what's
+  // good / what's not" up front, echoing the design conversation's own 3/10→
+  // 9/10 framing, rather than working through seven sections in an arbitrary
+  // letter order regardless of relevance. Bucket membership is computed here,
+  // not left to the model, so it can never disagree with the cube state above.
+  const solidDims = DIMENSIONS.filter((d) => (cubeState[d.code]?.status ?? 'dark') === 'green');
+  const attentionDims = DIMENSIONS.filter((d) => {
+    const s = cubeState[d.code]?.status ?? 'dark';
+    return s === 'amber' || s === 'red';
+  }).sort((a, b) => {
+    const sa = cubeState[a.code]?.status;
+    const sb = cubeState[b.code]?.status;
+    if (sa === sb) return 0;
+    return sa === 'red' ? -1 : 1;
+  });
+  const darkDims = DIMENSIONS.filter((d) => (cubeState[d.code]?.status ?? 'dark') === 'dark');
+
+  const solidBlock =
+    solidDims.length === 0
+      ? ''
+      : `### What's Solid
+
+${solidDims
+  .map(
+    ({ name }) => `**${name}**
+
+[3–5 sentence paragraph describing what's actually been established for this aspect, in plain prose — lead with why it's solid.]
+`
+  )
+  .join('\n')}`;
+
+  const attentionBlock =
+    attentionDims.length === 0
+      ? ''
+      : `### Needs Attention
+
+${attentionDims
+  .map(
+    ({ code, name }) => `**${name}${cubeState[code]?.status === 'red' ? ' — critical gap' : ''}**
+
+[3–5 sentence paragraph describing what's established so far and what's still unresolved, in plain prose.]
+
+**Identified Gaps**
+- [bullet]
+
+**Yet to be Discussed** (omit this heading entirely if not applicable)
+- [bullet]
+`
+  )
+  .join('\n')}`;
+
+  const darkBlock =
+    darkDims.length === 0
+      ? ''
+      : `### Not Yet Discussed
+
+${darkDims.map(({ name }) => `**${name}** — No details available yet.`).join('\n')}
+`;
+
   return `You are generating an Adoption Journey Plan for a deployment being designed in the AI Diffusion Cube. You are given the full design conversation so far, the current per-dimension status below, and relevant wiki pathway content for grounding the "Related Pathway Experience" section.
 
 ## Wiki pathway content (for grounding "Related Pathway Experience" only)
@@ -311,18 +383,20 @@ CORE RULES
 
 2. A gap is different from something undiscussed:
 - "Identified Gap" = something was discussed, but a decision is unresolved, a risk was named, or a stated plan has a hole in it.
-- "Yet to be Discussed" = a sub-component of this dimension that simply hasn't come up at all.
-A dimension can have both, one, or neither.
+- "Yet to be Discussed" = a sub-component of this aspect that simply hasn't come up at all.
+An aspect can have both, one, or neither.
 
-3. If a dimension has no meaningful content from the conversation, write only: "No details available yet." Do not add gap or discussion sections under it, and do not pad it with filler.
+3. Reproduce the "At a Glance" list below exactly as given, verbatim, including the "[green]"/"[amber]"/"[red]"/"[dark]" tags — it's precomputed from the real cube state and must not be altered, reordered, or re-worded.
 
-4. Pathway references must be real, drawn from the wiki content provided, and specific to the gaps or decisions actually present in this plan — not generic framework quotes. If no wiki content is genuinely relevant to a dimension's gaps, omit that dimension from "Related Pathway Experience" rather than forcing a reference.
+4. The "What's Solid" / "Needs Attention" / "Not Yet Discussed" groupings below are also precomputed from the real cube state — an aspect's bucket placement is fixed; don't move one to a different bucket even if your own read of the conversation would put it elsewhere. Within "Not Yet Discussed," write only "No details available yet" — no gap or discussion sub-sections, no padding.
 
-5. Paraphrase pathway content in your own words; do not quote wiki text verbatim.
+5. Pathway references must be real, drawn from the wiki content provided, and specific to the gaps or decisions actually present in this plan — not generic framework quotes. If no wiki content is genuinely relevant to a gap, omit that item from "Related Pathway Experience" rather than forcing a reference.
 
-6. Use the framework's stage table ("Done when…" markers) for the ${currentStage || 'current'} stage to assess readiness for ${nextStage ? `the ${nextStage} stage` : 'full institutionalization, since there is no further stage'} — ground the "${readinessHeading}" section in those specific markers, not a general impression.
+6. Paraphrase pathway content in your own words; do not quote wiki text verbatim.
 
-7. Tone: direct and plain. State gaps and undiscussed items factually, without hedging or softening ("not yet discussed" not "we haven't really had a chance to dive into...").
+7. Use the framework's stage table ("Done when…" markers) for the ${currentStage || 'current'} stage to assess readiness for ${nextStage ? `the ${nextStage} stage` : 'full institutionalization, since there is no further stage'} — ground the "${readinessHeading}" section in those specific markers, not a general impression.
+
+8. Tone: direct and plain. State gaps and undiscussed items factually, without hedging or softening ("not yet discussed" not "we haven't really had a chance to dive into...").
 
 OUTPUT FORMAT (exact structure, using the deployment's actual name/sector/geography/stage and the current date-time given above in place of placeholders):
 
@@ -331,29 +405,24 @@ OUTPUT FORMAT (exact structure, using the deployment's actual name/sector/geogra
 *[meta.sector] · [meta.geography] · ${currentStage || '[meta.status, the current stage]'}*
 *Generated ${generatedAt} — reflects the conversation up to this point*
 
-### Overall Summary
+### At a Glance
 
-[2–4 sentences: what's being built, for whom, and a one-line note on overall readiness — drawn from meta.summary plus your own synthesis of dimension status. Do not list all seven dimensions here; that's what the sections below are for.]
+${atAGlanceLines}
 
-${DIMENSIONS.map(
-  ({ code, name }) => `### ${code} · ${name} — [status]
-
-[3–5 sentence paragraph describing what's actually been established for this dimension, in plain prose. Omit entirely if status is dark — replace this whole section's body with just "No details available yet."]
-
-**Identified Gaps** (omit this heading entirely if none)
-- [bullet]
-
-**Yet to be Discussed** (omit this heading entirely if none)
-- [bullet]
-`
-).join('\n')}
 ### ${readinessHeading}
 
 [Assess against the framework's "Done when…" markers for the ${currentStage || 'current'} stage: which are met, which are still open.${nextStage ? '' : currentStage ? ' Since this is the Scale stage, frame this as confirming full institutional ownership rather than readiness for a further stage.' : ''} If the stage hasn't been established yet, state that plainly and omit the rest of this section.]
 
+### Overall Summary
+
+[2–4 sentences: what's being built, for whom, and a one-line note on overall readiness — drawn from meta.summary plus your own synthesis of the cube state. Do not re-list all seven aspects here; the "At a Glance" list above and the sections below already cover that.]
+
+${solidBlock}
+${attentionBlock}
+${darkBlock}
 ### Suggested Next Steps
 
-[A numbered list, ordered by urgency/blocking-ness — not dimension order. Ground each step in a specific gap named above; don't introduce new gaps here. Typically 3–5 items. Base urgency on: gaps that block other decisions first, then critical/red items, then dark dimensions most likely to bite later given the stated timeline or stage.]
+[A numbered list, ordered by urgency/blocking-ness — not aspect order. Ground each step in a specific gap named above; don't introduce new gaps here. Typically 3–5 items. Base urgency on: gaps that block other decisions first, then critical/red items, then not-yet-discussed aspects most likely to bite later given the stated timeline or stage.]
 
 ### Related Pathway Experience
 

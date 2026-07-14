@@ -1,3 +1,5 @@
+import type { FaceStatus } from '@/lib/dimensions';
+
 // A small, purpose-built parser for the Adoption Journey Plan's markdown
 // subset (##/### headings, *italic* lines, **bold** runs, bullet and
 // numbered lists) — shared by the on-screen renderer and the PDF export so
@@ -107,6 +109,23 @@ export function parsePlanMarkdown(markdown: string): PlanBlock[] {
 export interface InlineRun {
   text: string;
   bold: boolean;
+}
+
+export interface StatusBulletItem {
+  status: FaceStatus | null;
+  text: string;
+}
+
+const STATUS_TAG_RE = /^\[(green|amber|red|dark)\]\s*/i;
+
+// The "At a Glance" section tags each bullet with a leading "[green]" /
+// "[amber]" / "[red]" / "[dark]" marker (see adoptionPlanSystemPrompt) rather
+// than an emoji — jsPDF's default fonts don't reliably include color emoji
+// glyphs, so both renderers draw a real colored dot from this instead.
+export function parseStatusBullet(item: string): StatusBulletItem {
+  const match = item.match(STATUS_TAG_RE);
+  if (!match) return { status: null, text: item };
+  return { status: match[1].toLowerCase() as FaceStatus, text: item.slice(match[0].length) };
 }
 
 // Splits a line into plain/bold runs for inline **bold** rendering.

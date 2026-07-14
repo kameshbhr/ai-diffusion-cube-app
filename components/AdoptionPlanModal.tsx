@@ -1,7 +1,8 @@
 'use client';
 
-import { InlineRun, parsePlanMarkdown, splitInlineBold } from '@/lib/adoption-plan-markdown';
+import { InlineRun, parsePlanMarkdown, parseStatusBullet, splitInlineBold } from '@/lib/adoption-plan-markdown';
 import { downloadPlanAsPdf } from '@/lib/adoption-plan-pdf';
+import { STATUS_COLORS } from '@/lib/dimensions';
 
 interface Props {
   markdown: string;
@@ -88,12 +89,28 @@ export default function AdoptionPlanModal({ markdown, loading, error, deployment
                   );
                 case 'bullets':
                   return (
-                    <ul key={i} className="list-disc pl-5 mb-3 space-y-1">
-                      {block.items.map((item, j) => (
-                        <li key={j} className="text-sm leading-relaxed">
-                          <InlineText text={item} />
-                        </li>
-                      ))}
+                    <ul key={i} className="list-none pl-0 mb-3 space-y-1">
+                      {block.items.map((item, j) => {
+                        const { status, text } = parseStatusBullet(item);
+                        return (
+                          <li key={j} className="text-sm leading-relaxed flex items-baseline gap-2">
+                            {status ? (
+                              <span
+                                className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 translate-y-[1px]"
+                                style={{ backgroundColor: STATUS_COLORS[status] }}
+                                aria-hidden
+                              />
+                            ) : (
+                              <span className="flex-shrink-0" aria-hidden>
+                                •
+                              </span>
+                            )}
+                            <span>
+                              <InlineText text={text} />
+                            </span>
+                          </li>
+                        );
+                      })}
                     </ul>
                   );
                 case 'numbered':
