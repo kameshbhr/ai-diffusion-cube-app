@@ -34,6 +34,7 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
   const [planLoading, setPlanLoading] = useState(false);
   const [planMarkdown, setPlanMarkdown] = useState('');
   const [planError, setPlanError] = useState<string | null>(null);
+  const [filesOpen, setFilesOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
 
@@ -132,7 +133,7 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
 
     return (
       <div
-        className="relative flex-1 flex flex-col items-center justify-center bg-[#F5EFE6] text-[#2C1A0E] p-8"
+        className="relative flex-1 flex flex-col items-center justify-center bg-[#F5EFE6] text-[#2C1A0E] p-4 sm:p-8"
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -242,7 +243,7 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
     <div className="flex-1 flex flex-col overflow-hidden bg-[#F5EFE6] text-[#2C1A0E]">
       {/* Deployment info */}
       <div className="border-b border-[#7A5C44]/20 p-4">
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
           {onBack ? (
             <button onClick={onBack} className="text-xs text-[#7A5C44] hover:text-[#2C1A0E] transition-colors">
               ← All deployments
@@ -250,12 +251,20 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
           ) : (
             <span />
           )}
-          <button
-            onClick={handleGenerateAdoptionPlan}
-            className="text-xs font-medium px-3.5 py-1.5 bg-[#2C1A0E] hover:bg-[#3a2414] text-white rounded-lg shadow-sm transition-colors flex-shrink-0"
-          >
-            📄 Generate Adoption Plan
-          </button>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={() => setFilesOpen(true)}
+              className="md:hidden text-xs font-medium px-3 py-1.5 border border-[#7A5C44]/30 text-[#7A5C44] rounded-lg transition-colors"
+            >
+              📎 Files
+            </button>
+            <button
+              onClick={handleGenerateAdoptionPlan}
+              className="text-xs font-medium px-3.5 py-1.5 bg-[#2C1A0E] hover:bg-[#3a2414] text-white rounded-lg shadow-sm transition-colors"
+            >
+              📄 Generate Adoption Plan
+            </button>
+          </div>
         </div>
         <h2 className="text-lg font-bold text-[#2C1A0E]">{conversation.meta.name || 'New deployment'}</h2>
         {[conversation.meta.sector, conversation.meta.geography, conversation.meta.status].some(Boolean) && (
@@ -278,7 +287,7 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
         </div>
       </div>
       {/* Chat + files */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative">
         <div className="flex-1 min-w-0">
           <ChatPanel
             messages={conversation.messages}
@@ -288,7 +297,7 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
             placeholder="Describe your deployment context…"
           />
         </div>
-        <div className="w-[260px] flex-shrink-0 border-l border-[#7A5C44]/20 p-3 overflow-y-auto">
+        <div className="hidden md:block w-[260px] flex-shrink-0 border-l border-[#7A5C44]/20 p-3 overflow-y-auto">
           <AttachmentsPanel
             attachments={pendingAttachments}
             uploadedFileNames={extractUploadedFileNames(conversation.messages)}
@@ -296,6 +305,34 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
             onRemoveAttachment={removeAttachment}
           />
         </div>
+
+        {filesOpen && (
+          <div
+            className="md:hidden fixed inset-0 z-40 bg-black/40 flex items-end"
+            onClick={() => setFilesOpen(false)}
+          >
+            <div
+              className="bg-[#F5EFE6] w-full max-h-[70vh] rounded-t-2xl p-4 overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-end mb-2">
+                <button
+                  onClick={() => setFilesOpen(false)}
+                  aria-label="Close"
+                  className="text-[#7A5C44] hover:text-[#2C1A0E] text-lg leading-none px-1"
+                >
+                  ×
+                </button>
+              </div>
+              <AttachmentsPanel
+                attachments={pendingAttachments}
+                uploadedFileNames={extractUploadedFileNames(conversation.messages)}
+                onAttachFiles={handleAttachFiles}
+                onRemoveAttachment={removeAttachment}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {planOpen && (

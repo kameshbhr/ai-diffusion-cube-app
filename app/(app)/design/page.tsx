@@ -103,8 +103,8 @@ function DesignPageContent() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto bg-[#F5EFE6] text-[#2C1A0E] p-8">
-      <div className="flex items-center justify-between mb-6">
+    <div className="flex-1 overflow-y-auto bg-[#F5EFE6] text-[#2C1A0E] p-4 sm:p-8">
+      <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold">Your deployments</h1>
           <p className="text-[#7A5C44] text-sm mt-1">

@@ -31,7 +31,7 @@ export default function AdoptionPlanModal({ markdown, loading, error, deployment
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-6">
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-3 sm:p-6">
       <div className="bg-[#F5EFE6] text-[#2C1A0E] rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
         <div className="flex items-center justify-between p-4 border-b border-[#7A5C44]/20 flex-shrink-0">
           <h2 className="text-lg font-bold">Adoption Journey Plan</h2>

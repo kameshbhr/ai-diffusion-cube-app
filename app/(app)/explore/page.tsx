@@ -238,7 +238,7 @@ function ExplorePageContent() {
 
   if (!selected) {
     return (
-      <div className="flex-1 overflow-y-auto bg-[#F5EFE6] text-[#2C1A0E] p-8">
+      <div className="flex-1 overflow-y-auto bg-[#F5EFE6] text-[#2C1A0E] p-4 sm:p-8">
         <h1 className="text-2xl font-bold">Deployments Library</h1>
         <p className="text-[#7A5C44] text-sm mt-1 mb-6">
           Lived experiences from existing AI deployments - pick one to see what worked, what didn&apos;t, and what&apos;s reusable.
