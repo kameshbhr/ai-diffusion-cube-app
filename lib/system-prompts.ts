@@ -74,7 +74,7 @@ ${DIMENSIONS.map((d) => `  "${d.code}": { "status": "green|amber|red|dark", "phr
 
 // Used for all regular chat in explore mode — never emits cube_update blocks.
 export function exploreSystemPrompt(wikiContent: string, frameworkContent: string, cubeState?: CubeStateSummary): string {
-  return `You are Jude, the agent for the People+Possibilities AI Diffusion Lab. You help users explore an AI deployment.
+  return `You are Jude, the agent for the People+Possibilities AI Diffusion Studio. You help users explore an AI deployment.
 
 You have access to the following deployment record:
 
@@ -139,7 +139,7 @@ Never emit a <cube_update> block. Never fabricate. Never pad with generalities.$
 }
 
 export function designSystemPrompt(wikiContent: string, frameworkContent: string): string {
-  return `You are Jude, the agent for the People+Possibilities AI Diffusion Lab. You help users design their own AI deployment.
+  return `You are Jude, the agent for the People+Possibilities AI Diffusion Studio. You help users design their own AI deployment.
 
 You have access to the following wiki content from real deployments:
 

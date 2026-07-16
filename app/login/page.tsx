@@ -41,7 +41,7 @@ function LoginForm() {
     <div className="min-h-screen bg-[#F5EFE6] flex flex-col items-center justify-center px-6">
       <div className="flex items-center gap-3 mb-8">
         <CubeIcon size={40} />
-        <h1 className="text-3xl font-bold text-[#2C1A0E] tracking-tight">People+Possibilities AI Diffusion Lab</h1>
+        <h1 className="text-3xl font-bold text-[#2C1A0E] tracking-tight">People+Possibilities AI Diffusion Studio</h1>
       </div>
 
       <form

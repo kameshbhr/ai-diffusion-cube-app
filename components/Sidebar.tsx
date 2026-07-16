@@ -46,7 +46,7 @@ export default function Sidebar({ email, designs }: Props) {
     <aside className="w-[220px] flex-shrink-0 h-screen flex flex-col bg-[#F5EFE6] text-[#2C1A0E] border-r border-[#7A5C44]/20">
       <Link href="/" className="p-4 flex items-center gap-2 border-b border-[#7A5C44]/20 hover:bg-[#7A5C44]/10 transition-colors">
         <CubeIcon size={24} />
-        <span className="font-semibold text-sm leading-tight">People+Possibilities AI Diffusion Lab</span>
+        <span className="font-semibold text-sm leading-tight">People+Possibilities AI Diffusion Studio</span>
       </Link>
 
       <nav className="p-3 space-y-1">
