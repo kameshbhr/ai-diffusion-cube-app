@@ -254,9 +254,7 @@ function ExplorePageContent() {
                 className="text-left rounded-2xl border border-[#7A5C44]/20 bg-white hover:border-[#7A5C44]/50 hover:shadow-sm transition-all p-5 flex flex-col gap-2"
               >
                 <div className="font-semibold text-[#2C1A0E]">{p.name}</div>
-                <p className="text-sm text-[#7A5C44] leading-relaxed">
-                  {copyCache[p.slug]?.card ?? <span className="italic text-[#7A5C44]/60">Loading description…</span>}
-                </p>
+                <p className="text-sm text-[#7A5C44] leading-relaxed">{p.description}</p>
               </button>
             ))}
           </div>

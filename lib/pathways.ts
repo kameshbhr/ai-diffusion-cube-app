@@ -4,8 +4,11 @@ export interface Pathway {
   description: string;
 }
 
-// Parse pathways from the index.md "## Pathways" table:
-// | [Name](pathways/slug.md) | Summary text |
+// Parse pathway slugs, order, and fallback descriptions from the index.md
+// "## Pathways" table: | [Name](pathways/slug.md) | Summary text |
+// The link text is only a placeholder name here — fetchPathways() below
+// overrides it with each pathway file's own title, which is the real
+// display name.
 export function parsePathways(indexMd: string): Pathway[] {
   const results: Pathway[] = [];
   const re = /\|\s*\[([^\]]+)\]\(pathways\/([^)]+)\.md\)\s*\|\s*([^|\n]+?)\s*\|/g;
@@ -18,6 +21,14 @@ export function parsePathways(indexMd: string): Pathway[] {
     });
   }
   return results;
+}
+
+// A pathway's display name is its own file's title — the first H1 line —
+// not the index.md table's link text, since the table entry is just a
+// short label and can drift from what the pathway page itself is titled.
+export function parsePathwayTitle(pathwayMd: string): string | null {
+  const m = pathwayMd.match(/^#\s+(.+)$/m);
+  return m ? m[1].trim() : null;
 }
 
 // In-memory, session-lifetime caches — several places (Explore page, the
@@ -35,7 +46,20 @@ export async function fetchPathways(): Promise<Pathway[]> {
     const base = process.env.NEXT_PUBLIC_GITHUB_WIKI_BASE_URL ?? '';
     pathwaysCache = fetch(`${base}/wiki/index.md`)
       .then((r) => r.text())
-      .then(parsePathways);
+      .then(parsePathways)
+      .then((list) =>
+        Promise.all(
+          list.map(async (p) => {
+            try {
+              const md = await fetchPathwayMarkdown(p.slug);
+              const title = parsePathwayTitle(md);
+              return title ? { ...p, name: title } : p;
+            } catch {
+              return p; // fall back to the index.md name if the pathway file can't be fetched
+            }
+          })
+        )
+      );
     pathwaysCache.catch(() => {
       pathwaysCache = null; // allow a retry on the next call if this one failed
     });

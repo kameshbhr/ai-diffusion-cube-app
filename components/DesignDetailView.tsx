@@ -212,27 +212,27 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
               Send
             </button>
           </div>
-
-          {examplePathways.length > 0 && (
-            <div className="mt-8">
-              <p className="text-[10px] uppercase tracking-wide text-[#7A5C44]/70 mb-2 text-center">
-                Already implemented — explore these
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {examplePathways.map((p) => (
-                  <Link
-                    key={p.slug}
-                    href={`/explore?pathway=${p.slug}`}
-                    className="text-left rounded-xl border border-[#7A5C44]/20 bg-white hover:border-[#7A5C44]/50 hover:shadow-sm transition-all p-3 flex flex-col gap-1"
-                  >
-                    <div className="text-sm font-semibold text-[#2C1A0E]">{p.name}</div>
-                    <p className="text-xs text-[#7A5C44] leading-relaxed line-clamp-2">{p.description}</p>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
+
+        {examplePathways.length > 0 && (
+          <div className="w-full max-w-3xl mt-8">
+            <p className="text-[10px] uppercase tracking-wide text-[#7A5C44]/70 mb-2 text-center">
+              Already implemented — explore these
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {examplePathways.map((p) => (
+                <Link
+                  key={p.slug}
+                  href={`/explore?pathway=${p.slug}`}
+                  className="text-left rounded-xl border border-[#7A5C44]/20 bg-white hover:border-[#7A5C44]/50 hover:shadow-sm transition-all p-4 flex flex-col gap-1"
+                >
+                  <div className="text-sm font-semibold text-[#2C1A0E]">{p.name}</div>
+                  <p className="text-xs text-[#7A5C44] leading-relaxed">{p.description}</p>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
