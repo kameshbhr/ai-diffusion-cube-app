@@ -95,6 +95,8 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
         return;
       }
 
+      const nextVersionNumber = (latest?.version_number ?? 0) + 1;
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -103,6 +105,7 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
           mode,
           cubeState: conversation.cubeState,
           meta: conversation.meta,
+          versionNumber: nextVersionNumber,
         }),
       });
 

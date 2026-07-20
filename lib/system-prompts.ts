@@ -475,7 +475,8 @@ export function planDocumentSystemPrompt(
   frameworkContent: string,
   cubeState: CubeStateSummary,
   meta: DesignBriefMeta,
-  generatedAt: string
+  generatedAt: string,
+  versionNumber: number
 ): string {
   const dimensionLines = DIMENSIONS.map(({ code, name }) => {
     const face = cubeState[code];
@@ -483,7 +484,9 @@ export function planDocumentSystemPrompt(
   }).join('\n');
 
   const currentStage = meta.status || '';
-  const titlePrefix = currentStage ? `${currentStage} Stage — ` : '';
+  // Title is built here, not left for the model — just the deployment name
+  // plus the version, nothing else, per the requested format.
+  const docTitle = `${meta.name || 'Untitled Deployment'} Plan Doc v${versionNumber}`;
 
   return `You are generating a Plan Document for a deployment being designed in the AI Diffusion Cube — a short, condensed, executive-ready summary, not the full detailed Analysis Doc. You are given the full design conversation so far, the current per-dimension status below, and relevant wiki pathway content for grounding recommendations.
 
@@ -515,13 +518,13 @@ CORE RULES
 
 2. This document is for a senior executive skimming it in under two minutes. Every section must be tight, concrete, and in simple English — short sentences, everyday words, no jargon, acronyms, or buzzwords.
 
-3. Recommendations must be grounded in real pathway precedent where genuinely relevant — paraphrase in your own words, never quote wiki text verbatim, and name the source deployment in a few words, not a lengthy retelling.
+3. Every recommendation in "Key Recommendations" must be grounded in a real, genuinely relevant pathway precedent from the wiki content above — paraphrase in your own words, never quote verbatim, and name the source deployment in a few words. Do not include a recommendation that isn't grounded this way, and do not invent generic advice to fill the section. If no pathway precedent genuinely applies to any gap identified, write exactly: "No recommendations available yet — no directly relevant pathway precedent found."
 
-4. Don't pad any section to hit a bullet count — 3 sharp bullets beat 5 where two would be filler.
+4. Don't pad any section to hit a target count — fewer sharp items beat more where the rest would be filler. It's fine, and expected when there's little to report, for a section to have very few items or say plainly that there's nothing to report yet.
 
 OUTPUT FORMAT (exact structure — four sections, nothing else, using the deployment's actual name/sector/geography/stage and the current date-time given above in place of placeholders):
 
-## ${titlePrefix}Plan Document: [meta.name, or "Untitled Deployment" if not yet known]
+## ${docTitle}
 
 *[meta.sector] · [meta.geography] · ${currentStage || '[stage]'}*
 *Generated ${generatedAt}*
@@ -532,15 +535,15 @@ OUTPUT FORMAT (exact structure — four sections, nothing else, using the deploy
 
 ### Key Gaps Identified
 
-[3–5 bullets, most critical first. Each names one real gap in plain language and why it matters — not every open item, just what a decision-maker needs to know.]
+[Up to 10 bullets, if that many are genuinely real — most critical first. Each names one real gap in plain language and why it matters. Fewer than 10 is normal and expected; don't pad to reach it. If there are no real gaps to report, write exactly: "No gaps identified."]
 
 ### Key Recommendations
 
-[3–5 bullets, each a concrete, actionable recommendation — grounded in pathway precedent where genuinely relevant (name the deployment in a few words if so). Phrase these as calls to action, not open questions.]
+[Up to 5 bullets, each a concrete, actionable recommendation drawn from a real pathway precedent (name the deployment in a few words). Phrase these as calls to action, not open questions. If no pathway precedent genuinely applies, write exactly: "No recommendations available yet — no directly relevant pathway precedent found." — see rule 3.]
 
 ### Next Steps
 
-[A numbered list, 3–5 items, ordered by priority. Each a concrete action, naming who's likely responsible if that's known from the conversation.]
+[A numbered list, up to 5 items, ordered by priority. Each a concrete action, naming who's likely responsible if that's known from the conversation. If there's nothing concrete to recommend yet, write exactly: "No next steps identified yet."]
 
 If the conversation has not yet produced enough content for a meaningful document (e.g., only the opening message has been exchanged), output only:
 

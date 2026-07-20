@@ -14,7 +14,7 @@ import { hashContent, getPathwayCache, upsertPathwayCubeState, upsertPathwayCopy
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export async function POST(req: Request) {
-  const { messages, mode, pathwaySlug, cubeState, meta } = await req.json();
+  const { messages, mode, pathwaySlug, cubeState, meta, versionNumber } = await req.json();
 
   const [wikiContent, frameworkContent] = await Promise.all([
     loadWikiContext(pathwaySlug),
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
   }
   else if (mode === 'design-plan-document') {
     const generatedAt = new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
-    systemPrompt = planDocumentSystemPrompt(wikiContent, frameworkContent, cubeState ?? {}, meta ?? {}, generatedAt);
+    systemPrompt = planDocumentSystemPrompt(wikiContent, frameworkContent, cubeState ?? {}, meta ?? {}, generatedAt, versionNumber ?? 1);
   }
   else if (mode === 'explore-init') systemPrompt = exploreInitSystemPrompt(wikiContent, frameworkContent);
   else if (mode === 'explore-copy') systemPrompt = explorePathwayCopySystemPrompt(wikiContent);
