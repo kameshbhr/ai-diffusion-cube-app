@@ -43,13 +43,25 @@ interface Props {
   placeholder?: string;
 }
 
+// Default height (px) matching the old rows={2} textarea, and the cap before it scrolls.
+const TEXTAREA_MIN_HEIGHT = 52;
+const TEXTAREA_MAX_HEIGHT = 200;
+
 export default function ChatPanel({ messages, onSend, pendingAttachments = [], loading, placeholder }: Props) {
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, TEXTAREA_MIN_HEIGHT), TEXTAREA_MAX_HEIGHT)}px`;
+  }, [input]);
 
   const hasBlockingAttachment = pendingAttachments.some((a) => a.state !== 'ready');
   const hasReadyAttachment = pendingAttachments.some((a) => a.state === 'ready');
@@ -101,8 +113,9 @@ export default function ChatPanel({ messages, onSend, pendingAttachments = [], l
       <div className="border-t border-[#7A5C44]/20 p-3">
         <div className="flex gap-2">
         <textarea
-          className="flex-1 bg-white text-[#2C1A0E] border border-[#7A5C44]/30 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:border-[#E8A838] placeholder-[#7A5C44]"
-          rows={2}
+          ref={textareaRef}
+          className="flex-1 bg-white text-[#2C1A0E] border border-[#7A5C44]/30 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:border-[#E8A838] placeholder-[#7A5C44] overflow-y-auto"
+          style={{ height: TEXTAREA_MIN_HEIGHT, maxHeight: TEXTAREA_MAX_HEIGHT }}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKey}

@@ -18,6 +18,10 @@ import {
   listDesignDocumentVersions,
 } from '@/lib/design-documents';
 
+// Default height (px) matching the old rows={1} textarea, and the cap before it scrolls.
+const WELCOME_TEXTAREA_MIN_HEIGHT = 36;
+const WELCOME_TEXTAREA_MAX_HEIGHT = 200;
+
 const DOC_LABELS: Record<DocType, { title: string; mode: string; loadingLabel: string; filenameSuffix: string }> = {
   analysis: {
     title: 'Analysis Doc',
@@ -52,6 +56,7 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
   } = useDesignConversation({ initial, onCreated, onChange });
 
   const [welcomeInput, setWelcomeInput] = useState('');
+  const welcomeTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [examplePathways, setExamplePathways] = useState<Pathway[]>([]);
   const [activeDocType, setActiveDocType] = useState<DocType | null>(null);
@@ -155,6 +160,13 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
       .then((list) => setExamplePathways(list.slice(0, 3)))
       .catch(() => {});
   }, [initial]);
+
+  useEffect(() => {
+    const el = welcomeTextareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, WELCOME_TEXTAREA_MIN_HEIGHT), WELCOME_TEXTAREA_MAX_HEIGHT)}px`;
+  }, [welcomeInput]);
 
   function handleWelcomeFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
@@ -267,8 +279,9 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
               📎
             </button>
             <textarea
-              className="flex-1 resize-none focus:outline-none text-sm py-2 bg-transparent placeholder-[#7A5C44]"
-              rows={1}
+              ref={welcomeTextareaRef}
+              className="flex-1 resize-none focus:outline-none text-sm py-2 bg-transparent placeholder-[#7A5C44] overflow-y-auto"
+              style={{ height: WELCOME_TEXTAREA_MIN_HEIGHT, maxHeight: WELCOME_TEXTAREA_MAX_HEIGHT }}
               value={welcomeInput}
               onChange={(e) => setWelcomeInput(e.target.value)}
               onKeyDown={handleWelcomeKey}
