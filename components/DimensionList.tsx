@@ -46,7 +46,8 @@ export default function DimensionList({ cubeState, onSelect, disabled }: Props) 
           );
         })}
       </div>
-      <div className="flex flex-wrap gap-3 mt-2">
+      <div className="flex flex-wrap items-center gap-3 mt-2">
+        <span className="text-[10px] font-medium text-[#7A5C44]/70">Coverage:</span>
         {STATUS_LEGEND.map(({ status, label }) => (
           <span key={status} className="flex items-center gap-1 text-[10px] text-[#7A5C44]/70">
             <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: STATUS_COLORS[status] }} />
