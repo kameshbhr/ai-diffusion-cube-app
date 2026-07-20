@@ -6,6 +6,7 @@ import {
   explorePathwayCopySystemPrompt,
   designSystemPrompt,
   adoptionPlanSystemPrompt,
+  planDocumentSystemPrompt,
 } from '@/lib/system-prompts';
 import { logConversation } from '@/lib/logger';
 import { hashContent, getPathwayCache, upsertPathwayCubeState, upsertPathwayCopy } from '@/lib/pathway-cache';
@@ -49,13 +50,17 @@ export async function POST(req: Request) {
     const generatedAt = new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
     systemPrompt = adoptionPlanSystemPrompt(wikiContent, frameworkContent, cubeState ?? {}, meta ?? {}, generatedAt);
   }
+  else if (mode === 'design-plan-document') {
+    const generatedAt = new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
+    systemPrompt = planDocumentSystemPrompt(wikiContent, frameworkContent, cubeState ?? {}, meta ?? {}, generatedAt);
+  }
   else if (mode === 'explore-init') systemPrompt = exploreInitSystemPrompt(wikiContent, frameworkContent);
   else if (mode === 'explore-copy') systemPrompt = explorePathwayCopySystemPrompt(wikiContent);
   else systemPrompt = exploreSystemPrompt(wikiContent, frameworkContent, cubeState ?? undefined);
 
   const stream = await anthropic.messages.stream({
     model: 'claude-sonnet-4-6',
-    max_tokens: mode === 'design-adoption-plan' ? 4096 : 2048,
+    max_tokens: mode === 'design-adoption-plan' || mode === 'design-plan-document' ? 4096 : 2048,
     system: systemPrompt,
     messages,
   });

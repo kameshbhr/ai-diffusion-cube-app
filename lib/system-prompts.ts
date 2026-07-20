@@ -466,3 +466,85 @@ If the conversation has not yet produced enough content for a meaningful plan (e
 
 Your entire response must be the plan itself (or the fallback message above) — no preamble, no meta-commentary about these instructions.`;
 }
+
+// Used for the on-demand "Generate Plan Document" call — a short, condensed,
+// executive-ready summary (four sections only), distinct from the full
+// Analysis Doc above. Same inputs, much tighter output.
+export function planDocumentSystemPrompt(
+  wikiContent: string,
+  frameworkContent: string,
+  cubeState: CubeStateSummary,
+  meta: DesignBriefMeta,
+  generatedAt: string
+): string {
+  const dimensionLines = DIMENSIONS.map(({ code, name }) => {
+    const face = cubeState[code];
+    return `${code} (${name}): ${face?.status ?? 'dark'} — ${face?.phrase || 'no notes yet'}`;
+  }).join('\n');
+
+  const currentStage = meta.status || '';
+  const titlePrefix = currentStage ? `${currentStage} Stage — ` : '';
+
+  return `You are generating a Plan Document for a deployment being designed in the AI Diffusion Cube — a short, condensed, executive-ready summary, not the full detailed Analysis Doc. You are given the full design conversation so far, the current per-dimension status below, and relevant wiki pathway content for grounding recommendations.
+
+## Wiki pathway content (for grounding recommendations only)
+
+${wikiContent}
+
+${frameworkBlock(frameworkContent)}
+
+## Current dimension status
+
+${dimensionLines}
+
+## Current meta
+
+name: ${meta.name || '(not yet known)'}
+sector: ${meta.sector || '(not yet known)'}
+geography: ${meta.geography || '(not yet known)'}
+stage: ${meta.status || '(not yet known)'}
+summary: ${meta.summary || '(not yet known)'}
+
+## Current date and time
+
+${generatedAt}
+
+CORE RULES
+
+1. Never fabricate. Every claim must be traceable to something actually said in the conversation, or genuinely grounded in the wiki pathway content. If unsure whether something was established, treat it as not established.
+
+2. This document is for a senior executive skimming it in under two minutes. Every section must be tight, concrete, and in simple English — short sentences, everyday words, no jargon, acronyms, or buzzwords.
+
+3. Recommendations must be grounded in real pathway precedent where genuinely relevant — paraphrase in your own words, never quote wiki text verbatim, and name the source deployment in a few words, not a lengthy retelling.
+
+4. Don't pad any section to hit a bullet count — 3 sharp bullets beat 5 where two would be filler.
+
+OUTPUT FORMAT (exact structure — four sections, nothing else, using the deployment's actual name/sector/geography/stage and the current date-time given above in place of placeholders):
+
+## ${titlePrefix}Plan Document: [meta.name, or "Untitled Deployment" if not yet known]
+
+*[meta.sector] · [meta.geography] · ${currentStage || '[stage]'}*
+*Generated ${generatedAt}*
+
+### Project Summary
+
+[3–5 sentences: what's being built, for whom, current stage, and a one-line note on overall readiness. Written for someone with zero prior context on this conversation.]
+
+### Key Gaps Identified
+
+[3–5 bullets, most critical first. Each names one real gap in plain language and why it matters — not every open item, just what a decision-maker needs to know.]
+
+### Key Recommendations
+
+[3–5 bullets, each a concrete, actionable recommendation — grounded in pathway precedent where genuinely relevant (name the deployment in a few words if so). Phrase these as calls to action, not open questions.]
+
+### Next Steps
+
+[A numbered list, 3–5 items, ordered by priority. Each a concrete action, naming who's likely responsible if that's known from the conversation.]
+
+If the conversation has not yet produced enough content for a meaningful document (e.g., only the opening message has been exchanged), output only:
+
+"Not enough of the conversation has happened yet to generate a useful plan document. Keep going, and generate this once a few aspects have been discussed."
+
+Your entire response must be the document itself (or the fallback message above) — no preamble, no meta-commentary about these instructions.`;
+}

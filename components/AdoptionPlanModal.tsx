@@ -4,12 +4,24 @@ import { InlineRun, parsePlanMarkdown, parseStatusBullet, splitInlineBold } from
 import { downloadPlanAsPdf } from '@/lib/adoption-plan-pdf';
 import { STATUS_COLORS } from '@/lib/dimensions';
 
+export interface VersionOption {
+  version_number: number;
+  created_at: string;
+}
+
 interface Props {
+  title: string;
   markdown: string;
   loading: boolean;
   error: string | null;
   deploymentName: string;
   onClose: () => void;
+  filenameSuffix: string;
+  loadingLabel: string;
+  version?: string;
+  versions?: VersionOption[];
+  selectedVersionNumber?: number;
+  onSelectVersion?: (versionNumber: number) => void;
 }
 
 function InlineText({ text }: { text: string }) {
@@ -22,20 +34,50 @@ function InlineText({ text }: { text: string }) {
   );
 }
 
-export default function AdoptionPlanModal({ markdown, loading, error, deploymentName, onClose }: Props) {
+export default function AdoptionPlanModal({
+  title,
+  markdown,
+  loading,
+  error,
+  deploymentName,
+  onClose,
+  filenameSuffix,
+  loadingLabel,
+  version,
+  versions,
+  selectedVersionNumber,
+  onSelectVersion,
+}: Props) {
   const blocks = parsePlanMarkdown(markdown);
 
   function handleDownload() {
     const safeName = (deploymentName || 'deployment').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-    downloadPlanAsPdf(markdown, `${safeName}-adoption-plan.pdf`);
+    downloadPlanAsPdf(markdown, `${safeName}-${filenameSuffix}.pdf`);
   }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-3 sm:p-6">
       <div className="bg-[#F5EFE6] text-[#2C1A0E] rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between p-4 border-b border-[#7A5C44]/20 flex-shrink-0">
-          <h2 className="text-lg font-bold">Adoption Journey Plan</h2>
+        <div className="flex items-center justify-between p-4 border-b border-[#7A5C44]/20 flex-shrink-0 gap-2 flex-wrap">
           <div className="flex items-center gap-2">
+            <h2 className="text-lg font-bold">{title}</h2>
+            {version && <span className="text-xs text-[#7A5C44] bg-[#7A5C44]/10 rounded-full px-2 py-0.5">{version}</span>}
+          </div>
+          <div className="flex items-center gap-2">
+            {versions && versions.length > 1 && onSelectVersion && (
+              <select
+                value={selectedVersionNumber}
+                onChange={(e) => onSelectVersion(Number(e.target.value))}
+                className="text-xs border border-[#7A5C44]/30 rounded-lg px-2 py-1.5 bg-white text-[#2C1A0E]"
+                aria-label="Select version"
+              >
+                {versions.map((v) => (
+                  <option key={v.version_number} value={v.version_number}>
+                    v0.{v.version_number} — {new Date(v.created_at).toLocaleDateString()}
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               onClick={handleDownload}
               disabled={loading || !markdown}
@@ -57,7 +99,7 @@ export default function AdoptionPlanModal({ markdown, loading, error, deployment
           {error && <p className="text-[#D64045] text-sm">{error}</p>}
 
           {!error && blocks.length === 0 && loading && (
-            <p className="text-[#7A5C44] text-sm animate-pulse">Generating adoption plan…</p>
+            <p className="text-[#7A5C44] text-sm animate-pulse">{loadingLabel}</p>
           )}
 
           {!error &&

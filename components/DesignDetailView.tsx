@@ -8,6 +8,30 @@ import DimensionList from '@/components/DimensionList';
 import AdoptionPlanModal from '@/components/AdoptionPlanModal';
 import { DesignConversation, extractUploadedFileNames, toApiMessages, useDesignConversation } from '@/lib/design-conversation';
 import { Pathway, fetchPathways } from '@/lib/pathways';
+import {
+  DesignDocumentRow,
+  DocType,
+  formatVersionLabel,
+  getLatestDesignDocument,
+  hashConversationState,
+  insertDesignDocumentVersion,
+  listDesignDocumentVersions,
+} from '@/lib/design-documents';
+
+const DOC_LABELS: Record<DocType, { title: string; mode: string; loadingLabel: string; filenameSuffix: string }> = {
+  analysis: {
+    title: 'Analysis Doc',
+    mode: 'design-adoption-plan',
+    loadingLabel: 'Generating analysis doc…',
+    filenameSuffix: 'analysis-doc',
+  },
+  plan: {
+    title: 'Plan Document',
+    mode: 'design-plan-document',
+    loadingLabel: 'Generating plan document…',
+    filenameSuffix: 'plan-document',
+  },
+};
 
 interface Props {
   initial: DesignConversation | null;
@@ -30,28 +54,53 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
   const [welcomeInput, setWelcomeInput] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [examplePathways, setExamplePathways] = useState<Pathway[]>([]);
-  const [planOpen, setPlanOpen] = useState(false);
-  const [planLoading, setPlanLoading] = useState(false);
-  const [planMarkdown, setPlanMarkdown] = useState('');
-  const [planError, setPlanError] = useState<string | null>(null);
+  const [activeDocType, setActiveDocType] = useState<DocType | null>(null);
+  const [docLoading, setDocLoading] = useState(false);
+  const [docMarkdown, setDocMarkdown] = useState('');
+  const [docError, setDocError] = useState<string | null>(null);
+  const [docVersionNumber, setDocVersionNumber] = useState<number | null>(null);
+  const [docVersionRows, setDocVersionRows] = useState<DesignDocumentRow[]>([]);
   const [filesOpen, setFilesOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
 
-  async function handleGenerateAdoptionPlan() {
+  // Handles both "Generate Analysis Doc" and "Generate Plan Document" — same
+  // shape, different system prompt/mode. Checks for a cached version matching
+  // the conversation's current state first (same hash = nothing's changed
+  // since the last generation), and only calls the model on a cache miss,
+  // then stores the result as the next version (v0.1, v0.2, ...).
+  async function handleGenerateDocument(docType: DocType) {
     if (!conversation) return;
-    setPlanOpen(true);
-    setPlanLoading(true);
-    setPlanError(null);
-    setPlanMarkdown('');
+    const { title, mode } = DOC_LABELS[docType];
+
+    setActiveDocType(docType);
+    setDocLoading(true);
+    setDocError(null);
+    setDocMarkdown('');
+    setDocVersionNumber(null);
+    setDocVersionRows([]);
 
     try {
+      const contentHash = hashConversationState(conversation.messages, conversation.cubeState);
+      const latest = await getLatestDesignDocument(conversation.id, docType);
+      const allVersions = await listDesignDocumentVersions(conversation.id, docType);
+      setDocVersionRows(allVersions);
+
+      if (latest && latest.content_hash === contentHash) {
+        // Cache hit — nothing's changed in the conversation since this
+        // version was generated, so serve it directly with no model call.
+        setDocMarkdown(latest.content);
+        setDocVersionNumber(latest.version_number);
+        setDocLoading(false);
+        return;
+      }
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [...toApiMessages(conversation.messages), { role: 'user', content: 'Generate the adoption journey plan now.' }],
-          mode: 'design-adoption-plan',
+          messages: [...toApiMessages(conversation.messages), { role: 'user', content: `Generate the ${title.toLowerCase()} now.` }],
+          mode,
           cubeState: conversation.cubeState,
           meta: conversation.meta,
         }),
@@ -66,13 +115,32 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
         const { done, value } = await reader.read();
         if (done) break;
         text += decoder.decode(value, { stream: true });
-        setPlanMarkdown(text);
+        setDocMarkdown(text);
+      }
+
+      const saved = await insertDesignDocumentVersion(
+        conversation.id,
+        docType,
+        contentHash,
+        text,
+        latest?.version_number ?? 0
+      );
+      if (saved) {
+        setDocVersionNumber(saved.version_number);
+        setDocVersionRows((prev) => [saved, ...prev]);
       }
     } catch {
-      setPlanError('Could not generate the adoption plan. Try again.');
+      setDocError(`Could not generate the ${title.toLowerCase()}. Try again.`);
     } finally {
-      setPlanLoading(false);
+      setDocLoading(false);
     }
+  }
+
+  function handleSelectVersion(versionNumber: number) {
+    const row = docVersionRows.find((v) => v.version_number === versionNumber);
+    if (!row) return;
+    setDocVersionNumber(row.version_number);
+    setDocMarkdown(row.content);
   }
 
   // Only relevant for the welcome (not-yet-created) screen — `initial` is
@@ -259,10 +327,16 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
               📎 Files
             </button>
             <button
-              onClick={handleGenerateAdoptionPlan}
+              onClick={() => handleGenerateDocument('plan')}
+              className="text-xs font-medium px-3.5 py-1.5 border border-[#2C1A0E]/30 text-[#2C1A0E] hover:bg-[#2C1A0E]/5 rounded-lg transition-colors"
+            >
+              📋 Generate Plan Document
+            </button>
+            <button
+              onClick={() => handleGenerateDocument('analysis')}
               className="text-xs font-medium px-3.5 py-1.5 bg-[#2C1A0E] hover:bg-[#3a2414] text-white rounded-lg shadow-sm transition-colors"
             >
-              📄 Generate Adoption Plan
+              📄 Generate Analysis Doc
             </button>
           </div>
         </div>
@@ -335,13 +409,20 @@ export default function DesignDetailView({ initial, onCreated, onChange, onBack 
         )}
       </div>
 
-      {planOpen && (
+      {activeDocType && (
         <AdoptionPlanModal
-          markdown={planMarkdown}
-          loading={planLoading}
-          error={planError}
+          title={DOC_LABELS[activeDocType].title}
+          loadingLabel={DOC_LABELS[activeDocType].loadingLabel}
+          filenameSuffix={DOC_LABELS[activeDocType].filenameSuffix}
+          markdown={docMarkdown}
+          loading={docLoading}
+          error={docError}
           deploymentName={conversation.meta.name}
-          onClose={() => setPlanOpen(false)}
+          version={docVersionNumber != null ? formatVersionLabel(docVersionNumber) : undefined}
+          versions={docVersionRows}
+          selectedVersionNumber={docVersionNumber ?? undefined}
+          onSelectVersion={handleSelectVersion}
+          onClose={() => setActiveDocType(null)}
         />
       )}
     </div>
