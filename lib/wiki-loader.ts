@@ -1,16 +1,55 @@
-const BASE_URL = process.env.GITHUB_WIKI_BASE_URL!;
+import { createClient } from '@/lib/supabase/server';
 
-// In-memory cache: url -> markdown text
-const cache = new Map<string, string>();
+const BASE_URL = process.env.GITHUB_WIKI_BASE_URL!;
+const TTL_MS = 60 * 60 * 1000; // 1 hour — matches the old `revalidate: 3600` window
+
+// Fast path for a warm serverless instance handling several requests back to
+// back — avoids a Supabase round trip when possible. The real fix is the
+// Supabase-backed cache below: unlike this Map, it's shared across every
+// instance and survives cold starts, so concurrent traffic doesn't cause many
+// instances to each cold-fetch the same page from GitHub independently.
+const memoryCache = new Map<string, string>();
 
 async function fetchPage(path: string): Promise<string> {
-  const url = `${BASE_URL}/${path}`;
-  if (cache.has(url)) return cache.get(url)!;
+  if (memoryCache.has(path)) return memoryCache.get(path)!;
 
+  const supabase = await createClient();
+  const { data: cached } = await supabase
+    .from('wiki_cache')
+    .select('content, fetched_at')
+    .eq('path', path)
+    .maybeSingle();
+
+  if (cached && Date.now() - new Date(cached.fetched_at).getTime() < TTL_MS) {
+    memoryCache.set(path, cached.content);
+    return cached.content;
+  }
+
+  const url = `${BASE_URL}/${path}`;
   const res = await fetch(url, { next: { revalidate: 3600 } });
-  if (!res.ok) return '';
+  if (!res.ok) {
+    // GitHub fetch failed (rate-limited, down, etc.) — fall back to the last
+    // known cached copy rather than nothing, even if it's stale.
+    if (cached?.content) {
+      memoryCache.set(path, cached.content);
+      return cached.content;
+    }
+    return '';
+  }
+
   const text = await res.text();
-  cache.set(url, text);
+  memoryCache.set(path, text);
+
+  // Fire-and-forget — never blocks the response on a write, and a failure
+  // here (e.g. the migration hasn't been run yet) just means no caching,
+  // not a broken page load.
+  void supabase
+    .from('wiki_cache')
+    .upsert({ path, content: text, fetched_at: new Date().toISOString() }, { onConflict: 'path' })
+    .then(({ error }) => {
+      if (error) console.error('[wiki-loader] Failed to write wiki cache:', error.message);
+    });
+
   return text;
 }
 
