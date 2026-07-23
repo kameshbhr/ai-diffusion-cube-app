@@ -21,9 +21,10 @@ interface DesignSummary {
 interface Props {
   email: string | null;
   designs: DesignSummary[];
+  isAdmin?: boolean;
 }
 
-export default function Sidebar({ email, designs }: Props) {
+export default function Sidebar({ email, designs, isAdmin }: Props) {
   const pathname = usePathname();
   const inExploreContext = pathname?.startsWith('/explore') ?? false;
 
@@ -89,7 +90,7 @@ export default function Sidebar({ email, designs }: Props) {
       </Link>
 
       <nav className="p-3 space-y-1">
-        {NAV_ITEMS.map((item) => {
+        {[...NAV_ITEMS, ...(isAdmin ? [{ href: '/admin', label: 'Admin', icon: '🛠️' }] : [])].map((item) => {
           const active = pathname?.startsWith(item.href);
           return (
             <Link

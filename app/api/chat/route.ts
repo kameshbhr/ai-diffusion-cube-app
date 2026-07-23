@@ -10,11 +10,25 @@ import {
 } from '@/lib/system-prompts';
 import { logConversation } from '@/lib/logger';
 import { hashContent, getPathwayCache, upsertPathwayCubeState, upsertPathwayCopy } from '@/lib/pathway-cache';
+import { createClient } from '@/lib/supabase/server';
+import { hasRole } from '@/lib/roles';
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const DESIGN_MODES = ['design', 'design-adoption-plan', 'design-plan-document'];
 
 export async function POST(req: Request) {
   const { messages, mode, pathwaySlug, cubeState, meta, versionNumber } = await req.json();
+
+  // The real enforcement boundary for Design access — the UI-level gate
+  // (app/(app)/design/layout.tsx, app/(app)/page.tsx) only hides the button;
+  // this route is independently callable, so it has to check for itself.
+  if (DESIGN_MODES.includes(mode)) {
+    const supabase = await createClient();
+    const isAdopter = await hasRole(supabase, 'adopter');
+    if (!isAdopter) {
+      return Response.json({ error: 'Design requires the Adopter role.' }, { status: 403 });
+    }
+  }
 
   const [wikiContent, frameworkContent] = await Promise.all([
     loadWikiContext(pathwaySlug),

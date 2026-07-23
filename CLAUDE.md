@@ -55,17 +55,28 @@ proxy.ts                    ← Next.js middleware (Supabase auth gate for every
 
 There is no `Cube3D.tsx` or `DimensionPanel.tsx` anymore — the 3D cube visual from earlier versions of this app has been replaced by `DimensionList`, a flat list of colored dimension chips.
 
-## Auth and persistence
+## Auth, signup approval, and roles
 
 Every route except `/login` requires a signed-in Supabase user — enforced by `proxy.ts` (Next's middleware, exported as `proxy` per this Next.js version's convention), which redirects unauthenticated browser requests to `/login?next=<path>` and returns a 401 JSON body for unauthenticated `/api/*` requests. On each request it revalidates the session via `supabase.auth.getUser()` and forwards the verified email through an `x-user-email` request header, so `app/(app)/layout.tsx` doesn't need a second Auth API round trip just to render the sidebar.
 
-`/login` is a single page that toggles between sign-in and sign-up (Supabase email + password, `createClient().auth.signInWithPassword` / `.signUp`).
+There is no self-serve signup and no email in the approval loop — approval happens entirely in-app, via an admin dashboard, since email delivery repeatedly hit external blockers (domain DNS ownership, then an AWS Organizations policy) unrelated to the app itself. See `SIGNUP_APPROVAL_OPTIONS.md` for the email-based alternative this replaced; `lib/email.ts` and the `nodemailer` setup are kept in place, unused, in case that approach is revisited.
 
-Persistence is real and per-user, backed by three Supabase tables (`supabase/migrations/`), all with row-level security scoped to `auth.uid()` except `pathway_cache`, which is shared:
+`/login` toggles between sign-in (unchanged: `createClient().auth.signInWithPassword`) and a **request-access** form (Name, Email, Organization, Password) that calls `supabase.auth.signUp({ email, password, options: { data: { name, organization } } })` directly from the browser client — no server route involved; Supabase's own signup already rejects a duplicate email. This requires **"Confirm email" to be disabled** in Supabase's Auth → Providers → Email settings, otherwise `signUp` won't grant a session until a Supabase-sent confirmation link is clicked, which would reintroduce email into a flow specifically built to avoid it.
+
+**"Pending" has no separate status column — it's simply a signed-in user with zero rows in `user_roles`.** `app/(app)/layout.tsx` checks `lib/roles.ts`'s `hasAnyRole(supabase)` and renders an "awaiting approval" message instead of the app shell if the user holds no roles at all. Approving *is* granting a role — there's no separate approve/reject state to track beyond that.
+
+**`/admin`** (`app/admin/page.tsx`) — gated to whichever addresses are listed in `ADMIN_EMAILS` (`lib/roles.ts`'s `isAdminEmail`, the same env var originally built for the email flow; no separate `admin` role exists). Lists every Supabase user (via `lib/supabase/admin.ts`'s service-role client and `auth.admin.listUsers()`) cross-referenced with their `user_roles`, with a checkbox per role (`components/AdminDashboard.tsx`) that calls `app/api/admin/roles/route.ts` to insert/delete a `user_roles` row, and a **Reject** button (only shown for zero-role/pending users) that calls `app/api/admin/reject/route.ts` to delete the account outright via `auth.admin.deleteUser()` — rejecting is destructive on purpose, so a mistaken rejection just means signing up again with the same email later rather than a permanently stuck row. Both API routes re-check `isAdminEmail` server-side against the caller's own session — the client-side checkboxes are never trusted on their own.
+
+**Roles** (`user_roles` table — a user can hold more than one): `general_user` (Explore only), `adopter` (Explore + Design), `pathway_contributor` (Explore + Contributor — the Contributor feature itself is not yet built). All role assignment happens through `/admin` above — `lib/roles.ts`'s `hasRole(supabase, role)` checks the current user's own roles (RLS: select-own-rows only) for feature gating. Design access is gated twice: a UX-level check in `app/(app)/design/layout.tsx` and `app/(app)/page.tsx` (which also renders Design's quick-start), and the real enforcement boundary in `app/api/chat/route.ts` (returns 403 for `design`/`design-adoption-plan`/`design-plan-document` modes if the caller isn't an Adopter — the route is independently callable regardless of what the UI shows).
+
+Persistence is real and per-user, backed by Supabase tables (`supabase/migrations/`), all with row-level security scoped to `auth.uid()` except `pathway_cache`/`wiki_cache` (shared, not per-user):
 
 - **`designs`** — one row per in-progress or complete deployment design: `meta`, `cube_state`, and `messages` as `jsonb`, plus `updated_at`. A design row is created lazily — only once the user actually sends a first message or attachment, not the moment they land on a blank design screen.
 - **`design_documents`** — versioned, append-only storage for generated Analysis Docs and Plan Documents. Each generation is checked against a content hash of `{messages, cubeState}` first; an unchanged hash serves the cached row instead of calling the model again, otherwise a new version (`v0.1`, `v0.2`, …) is inserted.
-- **`pathway_cache`** — shared across all users (not per-user data), caching the silent `explore-init`/`explore-copy` model outputs per pathway slug, keyed by a hash of the wiki + framework content that produced them. A wiki edit changes the hash and naturally invalidates the cache — no manual busting needed.
+- **`pathway_cache`** — shared across all users, caching the silent `explore-init`/`explore-copy` model outputs per pathway slug, keyed by a hash of the wiki + framework content that produced them. A wiki edit changes the hash and naturally invalidates the cache — no manual busting needed.
+- **`wiki_cache`** — shared across all users, caching raw wiki pages fetched from GitHub (`lib/wiki-loader.ts`) by path, on a 1-hour TTL — avoids every serverless instance cold-fetching GitHub independently under concurrent load, and falls back to the last known copy if a GitHub fetch ever fails.
+- **`user_roles`** — `(user_id, role)` grants, described above.
+- **`pending_signups`** — unused leftover from the retired email-based approval flow; still exists in the database (not worth a destructive drop migration) but nothing reads or writes it anymore.
 
 ## Wiki loading
 
@@ -178,7 +189,11 @@ Renders a generated document (Analysis Doc or Plan Document) from its raw markdo
 
 ### Login (`/login`)
 
-Cream background, cube icon + "People+Possibilities / AI Diffusion Studio" title, a single card that toggles between sign-in and sign-up (email + password via Supabase).
+Cream background, cube icon + "People+Possibilities / AI Diffusion Studio" title, a single card that toggles between sign-in (email + password) and request-access (Name, Email, Organization, Password — creates the account directly via `signUp`, then waits on `/admin` approval; no email involved).
+
+### Admin (`/admin`)
+
+Plain table listing every user (name/organization from signup, email, a checkbox per role) with a Reject button for anyone still pending (zero roles). Gated to `ADMIN_EMAILS` addresses only. See "Auth, signup approval, and roles" above.
 
 ### Home (`/`)
 
@@ -227,14 +242,25 @@ GITHUB_WIKI_BASE_URL=https://raw.githubusercontent.com/kameshbhr/ai-diffusion-cu
 NEXT_PUBLIC_GITHUB_WIKI_BASE_URL=https://raw.githubusercontent.com/kameshbhr/ai-diffusion-cube-wiki/main
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 GOOGLE_SHEET_ID=your_sheet_id
 GOOGLE_SERVICE_ACCOUNT_JSON={...service account JSON...}
+SES_SMTP_HOST=email-smtp.<region>.amazonaws.com
+SES_SMTP_PORT=587
+SES_SMTP_USERNAME=your_ses_smtp_username
+SES_SMTP_PASSWORD=your_ses_smtp_password
+EMAIL_FROM_ADDRESS=you@yourdomain.com
+ADMIN_EMAILS=admin1@org.com,admin2@org.com
+APP_URL=https://your-deployed-domain.com
 ```
 
-Same variables in the Vercel dashboard under Project Settings → Environment Variables. `GOOGLE_SHEET_ID` / `GOOGLE_SERVICE_ACCOUNT_JSON` are used by `lib/logger.ts` for optional conversation logging — logging fails silently if absent. The Supabase migrations under `supabase/migrations/` must be applied to whatever project those URL/key variables point at before the app will work (designs, design_documents, pathway_cache tables).
+Same variables in the Vercel dashboard under Project Settings → Environment Variables. `GOOGLE_SHEET_ID` / `GOOGLE_SERVICE_ACCOUNT_JSON` are used by `lib/logger.ts` for optional conversation logging — logging fails silently if absent. The Supabase migrations under `supabase/migrations/` must be applied to whatever project those URL/key variables point at before the app will work (designs, design_documents, pathway_cache, wiki_cache, user_roles tables — `pending_signups` too, though it's unused now).
+
+`SUPABASE_SERVICE_ROLE_KEY` is server-only (never `NEXT_PUBLIC_`) and bypasses Row Level Security — used by `lib/supabase/admin.ts` for `/admin`'s user-listing/role-management/reject actions (`app/api/admin/roles/route.ts`, `app/api/admin/reject/route.ts`), never in client code. `ADMIN_EMAILS` is a comma-separated list of addresses allowed into `/admin` (`lib/roles.ts`'s `isAdminEmail`). `SES_SMTP_*`/`EMAIL_FROM_ADDRESS`/`APP_URL` are currently **unused** — leftover from the retired email-based approval flow, kept in case it's revisited (see `SIGNUP_APPROVAL_OPTIONS.md`).
 
 ## What's out of scope / not yet built
 
+- The Pathway Contributor role exists (`user_roles`) but its actual functionality is entirely TBD — no Contributor-only routes or features exist yet, so nothing is gated for it
 - The approval workflow for converting a design into a published wiki pathway
 - The disbursement / guided-share feature
 - Legacy binary Office formats (`.doc`, `.ppt`) for upload parsing — only modern XML-based formats are supported
