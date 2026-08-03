@@ -3,11 +3,12 @@
 import { useRef, useState } from 'react';
 import ChatPanel from '@/components/ChatPanel';
 import AttachmentsPanel from '@/components/AttachmentsPanel';
-import CoverageGrid from '@/components/CoverageGrid';
+import DimensionChips from '@/components/DimensionChips';
 import AdoptionPlanModal from '@/components/AdoptionPlanModal';
-import PathwayDraftModal from '@/components/PathwayDraftModal';
+import PathwayDraftCanvas from '@/components/PathwayDraftCanvas';
 import {
   AdoptionConversation,
+  AdoptionFlow,
   extractUploadedFileNames,
   toApiMessages,
   useAdoptionConversation,
@@ -21,7 +22,13 @@ import {
   insertDesignDocumentVersion,
   listDesignDocumentVersions,
 } from '@/lib/design-documents';
-import { createClient } from '@/lib/supabase/client';
+import {
+  PathwaySubmissionVersionRow,
+  getPublishedContentBySubmission,
+  insertPathwaySubmissionVersion,
+  listPathwaySubmissionVersions,
+  upsertPathwaySubmission,
+} from '@/lib/pathway-submission-versions';
 
 const DOC_LABELS: Record<DocType, { title: string; mode: string; loadingLabel: string; filenameSuffix: string }> = {
   analysis: {
@@ -40,12 +47,26 @@ const DOC_LABELS: Record<DocType, { title: string; mode: string; loadingLabel: s
 
 interface Props {
   initial: AdoptionConversation | null;
+  // Set from a dedicated entry point (/explore or /contribute) — the
+  // welcome screen shows a single Start button bound to this flow instead
+  // of a picker. Falls back to canExplore/canContribute below if omitted.
+  fixedFlow?: AdoptionFlow;
+  canExplore?: boolean;
+  canContribute?: boolean;
   onCreated?: (c: AdoptionConversation) => void;
   onChange?: (c: AdoptionConversation) => void;
   onBack?: () => void;
 }
 
-export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack }: Props) {
+export default function AdoptionWorkspace({
+  initial,
+  fixedFlow,
+  canExplore = false,
+  canContribute = false,
+  onCreated,
+  onChange,
+  onBack,
+}: Props) {
   const {
     conversation,
     loading,
@@ -54,6 +75,13 @@ export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack
     handleAttachFiles,
     removeAttachment,
   } = useAdoptionConversation({ initial, onCreated, onChange });
+
+  // Resolved once, at the top level, so both the welcome screen's file/drop
+  // handlers and its Start button use the exact same flow — a prior bug had
+  // this computed only inside the JSX below, which the file-upload path
+  // (drag-drop and the attach button) never saw, so uploads silently created
+  // the row with an empty flow regardless of /explore vs /contribute.
+  const defaultFlow: AdoptionFlow = fixedFlow ?? (canExplore ? 'explorer' : canContribute ? 'contributor' : '');
 
   const [welcomeInput, setWelcomeInput] = useState('');
   const [isDragging, setIsDragging] = useState(false);
@@ -64,33 +92,39 @@ export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack
   const [docVersionNumber, setDocVersionNumber] = useState<number | null>(null);
   const [docVersionRows, setDocVersionRows] = useState<DesignDocumentRow[]>([]);
   const [filesOpen, setFilesOpen] = useState(false);
-  const [gridOpen, setGridOpen] = useState(true);
+  const [headerExpanded, setHeaderExpanded] = useState(true);
   const [pathwayDraftOpen, setPathwayDraftOpen] = useState(false);
   const [pathwayDraftMarkdown, setPathwayDraftMarkdown] = useState('');
   const [pathwayDraftLoading, setPathwayDraftLoading] = useState(false);
   const [pathwayDraftError, setPathwayDraftError] = useState<string | null>(null);
+  const [pathwaySubmissionId, setPathwaySubmissionId] = useState<string | null>(null);
+  const [pathwayVersions, setPathwayVersions] = useState<PathwaySubmissionVersionRow[]>([]);
+  const [selectedVersionNumber, setSelectedVersionNumber] = useState<number | undefined>(undefined);
+  const [diffBaseline, setDiffBaseline] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
 
-  // Drafts the conversation as a would-be corpus pathway page (Sections 0-6 +
-  // Provenance appendix, same structure as the real corpus) for the user to
-  // review, edit, and optionally approve — see PathwayDraftModal.
-  async function handleGeneratePathwayDraft() {
+  // Drafts (or revises) the conversation as a would-be corpus pathway page
+  // (Sections 0-6 + Provenance appendix, same structure as the real corpus)
+  // for the Contributor to review, revise conversationally, and push — see
+  // PathwayDraftModal. Each call is a new version.
+  async function handleOpenPathwayDraft(revisionInstruction?: string) {
     if (!conversation) return;
     setPathwayDraftOpen(true);
     setPathwayDraftLoading(true);
     setPathwayDraftError(null);
-    setPathwayDraftMarkdown('');
+
+    const trailingMessage = revisionInstruction
+      ? `Please revise the pathway draft as follows: ${revisionInstruction}. Return the full revised document in the same Sections 0-6 + Provenance appendix format.`
+      : 'Draft my adoption as a pathway page now.';
 
     try {
+      const priorDraft = pathwayDraftMarkdown ? [{ role: 'assistant', content: pathwayDraftMarkdown }] : [];
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [
-            ...toApiMessages(conversation.messages),
-            { role: 'user', content: 'Draft my adoption as a pathway page now.' },
-          ],
+          messages: [...toApiMessages(conversation.messages), ...priorDraft, { role: 'user', content: trailingMessage }],
           mode: 'pathway-draft',
           grid: conversation.grid,
           meta: conversation.meta,
@@ -101,11 +135,31 @@ export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let text = '';
+      setPathwayDraftMarkdown('');
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         text += decoder.decode(value, { stream: true });
         setPathwayDraftMarkdown(text);
+      }
+
+      const submission = await upsertPathwaySubmission(conversation.id, text);
+      if (submission) {
+        setPathwaySubmissionId(submission.id);
+        const versions = await listPathwaySubmissionVersions(submission.id);
+        const previousVersionNumber = versions[0]?.version_number ?? 0;
+        const newVersion = await insertPathwaySubmissionVersion(
+          submission.id,
+          text,
+          revisionInstruction ?? 'Initial draft',
+          previousVersionNumber
+        );
+        const updatedVersions = newVersion ? [newVersion, ...versions] : versions;
+        setPathwayVersions(updatedVersions);
+        setSelectedVersionNumber(newVersion?.version_number ?? previousVersionNumber);
+
+        const published = await getPublishedContentBySubmission(submission.id);
+        setDiffBaseline(published ?? versions[0]?.content ?? '');
       }
     } catch {
       setPathwayDraftError('Could not draft this pathway page. Try again.');
@@ -114,16 +168,30 @@ export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack
     }
   }
 
-  // Approving only flags the draft for admin/pathway_contributor curation —
-  // it never publishes into the live wiki on its own (see
-  // supabase/migrations/0009_pathway_submissions.sql).
-  async function handleApprovePathwayDraft(finalText: string) {
-    if (!conversation) return;
-    const supabase = createClient();
-    const { error } = await supabase
-      .from('pathway_submissions')
-      .insert({ design_id: conversation.id, content: finalText });
-    if (error) throw new Error(error.message);
+  function handleSelectPathwayVersion(versionNumber: number) {
+    const row = pathwayVersions.find((v) => v.version_number === versionNumber);
+    if (!row) return;
+    setSelectedVersionNumber(row.version_number);
+    setPathwayDraftMarkdown(row.content);
+  }
+
+  // Pushes the submission straight to the public wiki — see
+  // app/api/pathway-submissions/push/route.ts (contributor self-serve, no
+  // separate admin approval step; admins keep full visibility via /admin).
+  async function handlePushPathwayDraft(commitMessage: string): Promise<{ ok: boolean; slug?: string; error?: string }> {
+    if (!pathwaySubmissionId) return { ok: false, error: 'Nothing to push yet.' };
+    try {
+      const res = await fetch('/api/pathway-submissions/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ submission_id: pathwaySubmissionId, commit_message: commitMessage }),
+      });
+      const data = await res.json();
+      if (!res.ok) return { ok: false, error: data.error };
+      return { ok: true, slug: data.slug };
+    } catch {
+      return { ok: false, error: 'Could not reach the server. Try again.' };
+    }
   }
 
   // Handles both documents — same flow, different mode. Cache-checked
@@ -207,7 +275,7 @@ export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack
   function handleWelcomeFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = '';
-    if (files.length) handleAttachFiles(files);
+    if (files.length) handleAttachFiles(files, defaultFlow);
   }
 
   function handleDragEnter(e: React.DragEvent) {
@@ -228,7 +296,7 @@ export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack
     dragCounter.current = 0;
     setIsDragging(false);
     const files = Array.from(e.dataTransfer.files ?? []);
-    if (files.length) handleAttachFiles(files);
+    if (files.length) handleAttachFiles(files, defaultFlow);
   }
 
   if (!conversation) {
@@ -236,17 +304,17 @@ export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack
     const hasReadyAttachment = pendingAttachments.some((a) => a.state === 'ready');
     const canSend = !loading && !hasBlockingAttachment && (welcomeInput.trim().length > 0 || hasReadyAttachment);
 
-    function handleWelcomeSend() {
+    function handleWelcomeSend(flow: AdoptionFlow) {
       if (!canSend) return;
       const text = welcomeInput.trim();
       setWelcomeInput('');
-      void handleUserSend(text);
+      void handleUserSend(text, flow);
     }
 
     function handleWelcomeKey(e: React.KeyboardEvent) {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.key === 'Enter' && !e.shiftKey && defaultFlow) {
         e.preventDefault();
-        handleWelcomeSend();
+        handleWelcomeSend(defaultFlow);
       }
     }
 
@@ -265,14 +333,24 @@ export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack
         )}
 
         <div className="w-full max-w-2xl animate-fade-in-up">
-          <p className="font-mono text-xs uppercase tracking-[0.2em] text-coral">Adoption Companion</p>
+          <p className="font-mono text-xs uppercase tracking-[0.2em] text-coral">
+            {fixedFlow === 'contributor' ? 'Contribute a Pathway' : fixedFlow === 'explorer' ? 'Explore Your Adoption' : 'Adoption Companion'}
+          </p>
           <h1 className="mt-4 font-display text-3xl font-medium leading-[1.15] tracking-tight text-navy sm:text-4xl">
-            Where does your adoption{' '}
-            <span className="font-serif italic text-coral">actually</span> stand?
+            {fixedFlow === 'contributor' ? (
+              <>
+                Turn your deployment into a <span className="font-serif italic text-coral">pathway</span>
+              </>
+            ) : (
+              <>
+                Where does your adoption <span className="font-serif italic text-coral">actually</span> stand?
+              </>
+            )}
           </h1>
           <p className="mt-4 max-w-xl text-base leading-relaxed text-ink-soft">
-            Share the documents you have, or just start talking. Everything you hear back is grounded
-            in what real deployments learned — you decide what to look at, and when.
+            {fixedFlow === 'contributor'
+              ? "Share the write-up you have. I'll remap it into the four-dimension pathway format, flag the open gaps, and help you push it to the wiki once you're ready."
+              : 'Share the documents you have, or just start talking. Everything you hear back is grounded in what real deployments learned.'}
           </p>
 
           <div className="mt-8">
@@ -330,24 +408,56 @@ export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack
                 placeholder="Describe your adoption, or drop a document…"
                 disabled={loading}
               />
-              <button
-                onClick={handleWelcomeSend}
-                disabled={!canSend}
-                className="rounded-xl bg-navy px-4 py-2 text-sm font-medium text-white transition hover:bg-coral disabled:opacity-40"
-              >
-                Start
-              </button>
+              {fixedFlow && (
+                <button
+                  onClick={() => handleWelcomeSend(fixedFlow)}
+                  disabled={!canSend}
+                  className="rounded-xl bg-navy px-4 py-2 text-sm font-medium text-white transition hover:bg-coral disabled:opacity-40"
+                >
+                  Start
+                </button>
+              )}
             </div>
+
+            {!fixedFlow &&
+              (canExplore || canContribute ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {canExplore && (
+                    <button
+                      onClick={() => handleWelcomeSend('explorer')}
+                      disabled={!canSend}
+                      className="rounded-xl bg-navy px-4 py-2 text-sm font-medium text-white transition hover:bg-coral disabled:opacity-40"
+                    >
+                      Explore my adoption
+                    </button>
+                  )}
+                  {canContribute && (
+                    <button
+                      onClick={() => handleWelcomeSend('contributor')}
+                      disabled={!canSend}
+                      className="rounded-xl border border-navy/20 px-4 py-2 text-sm font-medium text-navy transition hover:border-coral hover:text-coral disabled:opacity-40"
+                    >
+                      Contribute a pathway
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p className="mt-3 text-xs text-ink-soft">
+                  Ask an admin to grant you Explorer or Contributor access to get started.
+                </p>
+              ))}
           </div>
         </div>
       </div>
     );
   }
 
+  const flow = conversation.meta.flow;
+
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden bg-paper">
-      {/* Workspace header: meta + coverage grid */}
-      <div className="border-b border-navy/10 px-4 py-3 sm:px-6">
+      {/* Workspace header: title, sector/geography/stage, summary, dimension chips */}
+      <div className="border-b border-navy/10 p-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           {onBack ? (
             <button onClick={onBack} className="text-xs font-medium text-ink-soft transition hover:text-coral">
@@ -363,18 +473,14 @@ export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack
             >
               📎 Files
             </button>
-            <button
-              onClick={() => setGridOpen((v) => !v)}
-              className="rounded-lg border border-navy/15 px-3 py-1.5 text-xs font-medium text-ink-soft transition hover:border-coral hover:text-coral"
-            >
-              {gridOpen ? 'Hide standing' : 'Show standing'}
-            </button>
-            <button
-              onClick={handleGeneratePathwayDraft}
-              className="rounded-lg border border-navy/15 px-3 py-1.5 text-xs font-medium text-ink-soft transition hover:border-coral hover:text-coral"
-            >
-              Review as Wiki Page
-            </button>
+            {flow === 'contributor' && (
+              <button
+                onClick={() => handleOpenPathwayDraft()}
+                className="rounded-lg border border-navy/15 px-3 py-1.5 text-xs font-medium text-ink-soft transition hover:border-coral hover:text-coral"
+              >
+                Remap to Pathway Doc
+              </button>
+            )}
             <button
               onClick={() => handleGenerateDocument('plan')}
               className="rounded-lg border border-navy/20 px-3.5 py-1.5 text-xs font-medium text-navy transition hover:border-coral hover:text-coral"
@@ -390,26 +496,54 @@ export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack
           </div>
         </div>
 
-        <h2 className="font-display text-lg font-medium tracking-tight text-navy">
-          {conversation.meta.name || 'New adoption'}
-        </h2>
-        {[conversation.meta.sector, conversation.meta.geography, conversation.meta.stage].some(Boolean) && (
-          <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.15em] text-ink-soft">
-            {[conversation.meta.sector, conversation.meta.geography, conversation.meta.stage]
-              .filter(Boolean)
-              .join(' · ')}
+        {flow && (
+          <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-coral">
+            {flow === 'contributor' ? 'Contributor' : 'Explorer'}
           </p>
         )}
-        {gridOpen && (
-          <div className="mt-3 max-w-xl">
-            <CoverageGrid grid={conversation.grid} />
-          </div>
+        <button
+          onClick={() => setHeaderExpanded((v) => !v)}
+          className="mt-0.5 flex items-center gap-1.5 text-left"
+          aria-expanded={headerExpanded}
+        >
+          <h2 className="font-display text-lg font-medium tracking-tight text-navy">
+            {conversation.meta.name || 'New adoption'}
+          </h2>
+          <span
+            className={`text-ink-soft transition-transform ${headerExpanded ? 'rotate-180' : ''}`}
+            aria-hidden
+          >
+            ▾
+          </span>
+        </button>
+        {headerExpanded && (
+          <>
+            {[conversation.meta.sector, conversation.meta.geography, conversation.meta.stage].some(Boolean) && (
+              <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.15em] text-ink-soft">
+                {[conversation.meta.sector, conversation.meta.geography, conversation.meta.stage]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+            )}
+            {conversation.meta.summary && (
+              <p className="mt-2 max-h-24 overflow-y-auto whitespace-pre-line text-sm leading-relaxed text-ink">
+                {conversation.meta.summary}
+              </p>
+            )}
+          </>
         )}
+        <div className="mt-3">
+          <DimensionChips
+            grid={conversation.grid}
+            currentStage={conversation.meta.stage}
+            onSelect={(name) => handleUserSend(`Tell me about the ${name} dimension of my adoption.`, flow)}
+          />
+        </div>
       </div>
 
-      {/* Chat + files */}
+      {/* Chat + files (+ the pathway draft canvas, alongside chat rather than over it) */}
       <div className="relative flex flex-1 overflow-hidden">
-        <div className="min-w-0 flex-1">
+        <div className={`min-w-0 flex-1 ${pathwayDraftOpen ? 'lg:max-w-[420px] lg:flex-shrink-0' : ''}`}>
           <ChatPanel
             messages={conversation.messages}
             onSend={handleUserSend}
@@ -418,14 +552,34 @@ export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack
             placeholder="Ask, share, or think out loud…"
           />
         </div>
-        <div className="hidden w-[260px] flex-shrink-0 overflow-y-auto border-l border-navy/10 p-3 md:block">
-          <AttachmentsPanel
-            attachments={pendingAttachments}
-            uploadedFileNames={extractUploadedFileNames(conversation.messages)}
-            onAttachFiles={handleAttachFiles}
-            onRemoveAttachment={removeAttachment}
-          />
-        </div>
+
+        {pathwayDraftOpen && (
+          <div className="fixed inset-0 z-50 bg-paper lg:static lg:z-auto lg:min-w-0 lg:flex-1 lg:border-l lg:border-navy/10">
+            <PathwayDraftCanvas
+              markdown={pathwayDraftMarkdown}
+              loading={pathwayDraftLoading}
+              error={pathwayDraftError}
+              onRevise={(instruction) => handleOpenPathwayDraft(instruction)}
+              onPush={handlePushPathwayDraft}
+              versions={pathwayVersions}
+              selectedVersionNumber={selectedVersionNumber}
+              onSelectVersion={handleSelectPathwayVersion}
+              diffAgainst={diffBaseline}
+              onClose={() => setPathwayDraftOpen(false)}
+            />
+          </div>
+        )}
+
+        {!pathwayDraftOpen && (
+          <div className="hidden w-[260px] flex-shrink-0 overflow-y-auto border-l border-navy/10 p-3 md:block">
+            <AttachmentsPanel
+              attachments={pendingAttachments}
+              uploadedFileNames={extractUploadedFileNames(conversation.messages)}
+              onAttachFiles={handleAttachFiles}
+              onRemoveAttachment={removeAttachment}
+            />
+          </div>
+        )}
 
         {filesOpen && (
           <div className="fixed inset-0 z-40 flex items-end bg-navy/40 md:hidden" onClick={() => setFilesOpen(false)}>
@@ -452,16 +606,6 @@ export default function AdoptionWorkspace({ initial, onCreated, onChange, onBack
           </div>
         )}
       </div>
-
-      {pathwayDraftOpen && (
-        <PathwayDraftModal
-          markdown={pathwayDraftMarkdown}
-          loading={pathwayDraftLoading}
-          error={pathwayDraftError}
-          onApprove={handleApprovePathwayDraft}
-          onClose={() => setPathwayDraftOpen(false)}
-        />
-      )}
 
       {activeDocType && (
         <AdoptionPlanModal

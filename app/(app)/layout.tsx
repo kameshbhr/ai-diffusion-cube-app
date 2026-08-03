@@ -1,6 +1,6 @@
 import { headers } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
-import { hasAnyRole, isAdmin } from '@/lib/roles';
+import { hasAnyRole, hasRole, isAdmin } from '@/lib/roles';
 import SiteHeader from '@/components/SiteHeader';
 import Sidebar from '@/components/Sidebar';
 import SignOutButton from '@/components/SignOutButton';
@@ -38,16 +38,24 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     );
   }
 
-  const { data: adoptions } = await supabase
-    .from('designs')
-    .select('id, meta, updated_at')
-    .order('updated_at', { ascending: false });
+  const [{ data: adoptions }, canExplore, canContribute, adminAccess] = await Promise.all([
+    supabase.from('designs').select('id, meta, updated_at').order('updated_at', { ascending: false }),
+    hasRole(supabase, 'adopter'),
+    hasRole(supabase, 'pathway_contributor'),
+    isAdmin(supabase, email),
+  ]);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-paper">
       <SiteHeader />
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <Sidebar email={email} adoptions={adoptions ?? []} isAdmin={await isAdmin(supabase, email)} />
+        <Sidebar
+          email={email}
+          adoptions={adoptions ?? []}
+          isAdmin={adminAccess}
+          canExplore={canExplore}
+          canContribute={canContribute}
+        />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
       </div>
     </div>

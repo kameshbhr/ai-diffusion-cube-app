@@ -1,10 +1,12 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import AdoptionWorkspace from '@/components/AdoptionWorkspace';
 import { AdoptionConversation } from '@/lib/adoption-conversation';
 import { createClient } from '@/lib/supabase/client';
+import { hasRole } from '@/lib/roles';
 import { fetchAdoptionsList, setAdoptionsListCache } from '@/lib/adoptions-cache';
 
 function formatRelativeTime(iso: string): string {
@@ -16,9 +18,7 @@ function formatRelativeTime(iso: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-// 'draft' means "creating a new one" — not a real id yet, since creation is
-// deferred until the user actually sends a first message or attachment.
-type Selection = string | 'draft' | null;
+type Selection = string | null;
 
 function AdoptionsPageContent() {
   const searchParams = useSearchParams();
@@ -29,6 +29,8 @@ function AdoptionsPageContent() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
   const [appliedOpenId, setAppliedOpenId] = useState<string | null>(null);
+  const [canExplore, setCanExplore] = useState(false);
+  const [canContribute, setCanContribute] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,6 +48,16 @@ function AdoptionsPageContent() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    const supabase = createClient();
+    Promise.all([hasRole(supabase, 'adopter'), hasRole(supabase, 'pathway_contributor')]).then(
+      ([explorer, contributor]) => {
+        setCanExplore(explorer);
+        setCanContribute(contributor);
+      }
+    );
   }, []);
 
   // Deep-links from the sidebar (/adoptions?open=<id>). Adjusted during
@@ -74,7 +86,7 @@ function AdoptionsPageContent() {
   }
 
   if (selection) {
-    const existing = selection === 'draft' ? null : adoptions.find((a) => a.id === selection) ?? null;
+    const existing = adoptions.find((a) => a.id === selection) ?? null;
     return (
       <AdoptionWorkspace
         key={selection}
@@ -107,21 +119,31 @@ function AdoptionsPageContent() {
             Every adoption you&apos;ve worked through, and where each one stands.
           </p>
         </div>
-        <button
-          onClick={() => setSelection('draft')}
-          className="flex-shrink-0 rounded-lg bg-navy px-4 py-2 text-sm font-medium text-white transition hover:bg-coral"
-        >
-          + New adoption
-        </button>
+        <div className="flex flex-shrink-0 gap-2">
+          {canExplore && (
+            <Link
+              href="/explore"
+              className="rounded-lg bg-navy px-4 py-2 text-sm font-medium text-white transition hover:bg-coral"
+            >
+              + Explore
+            </Link>
+          )}
+          {canContribute && (
+            <Link
+              href="/contribute"
+              className="rounded-lg border border-navy/20 px-4 py-2 text-sm font-medium text-navy transition hover:border-coral hover:text-coral"
+            >
+              + Contribute
+            </Link>
+          )}
+        </div>
       </div>
 
       {!loaded ? (
         <p className="text-sm text-ink-soft">Loading…</p>
       ) : adoptions.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-          <p className="text-sm text-ink-soft">
-            Click <strong className="text-navy">+ New adoption</strong> above to start.
-          </p>
+          <p className="text-sm text-ink-soft">Start a new adoption from the buttons above to see it here.</p>
           {loadError && <p className="text-xs text-coral">{loadError}</p>}
         </div>
       ) : (

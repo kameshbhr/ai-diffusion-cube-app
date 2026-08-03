@@ -5,15 +5,34 @@ import { createClient } from '@/lib/supabase/client';
 import { extractTextFromFile, fileToImageBlock, getFileExtension, isImageFile } from '@/lib/extract-text';
 import { parseGridUpdate, stripGridUpdate } from '@/lib/grid-update';
 
+export type AdoptionFlow = 'explorer' | 'contributor' | '';
+
 export interface AdoptionMeta {
   name: string;
   sector: string;
   geography: string;
   stage: string;
   summary: string;
+  // Chosen once on the welcome screen, gated by role — fixes which system
+  // prompt (explorer vs contributor) this adoption's companion turns use.
+  flow: AdoptionFlow;
+  // Which numbered step of that flow the model last reported being on (see
+  // gridUpdateContract in lib/system-prompts.ts). 0 = no turn yet. Persisted
+  // here and re-injected into the prompt every turn, since the grid_update
+  // block itself is stripped before a message is stored — the model can't
+  // "read back" its own past JSON from history.
+  flowStep: number;
 }
 
-export const EMPTY_META: AdoptionMeta = { name: '', sector: '', geography: '', stage: '', summary: '' };
+export const EMPTY_META: AdoptionMeta = {
+  name: '',
+  sector: '',
+  geography: '',
+  stage: '',
+  summary: '',
+  flow: '',
+  flowStep: 0,
+};
 
 export { EMPTY_GRID };
 
@@ -153,7 +172,7 @@ export function useAdoptionConversation({ initial, onCreated, onChange }: UseAdo
   }
 
   const sendMessage = useCallback(
-    async (id: string, history: Message[], userMessage: Message) => {
+    async (id: string, history: Message[], userMessage: Message, flow: AdoptionFlow, grid: GridState, meta: AdoptionMeta) => {
       const next: Message[] = [...history, userMessage];
       update((c) => ({ ...c, messages: next }));
       setLoading(true);
@@ -165,6 +184,9 @@ export function useAdoptionConversation({ initial, onCreated, onChange }: UseAdo
           messages: toApiMessages(next),
           mode: 'companion',
           designId: id,
+          flow,
+          grid,
+          meta,
         }),
       });
 
@@ -189,15 +211,15 @@ export function useAdoptionConversation({ initial, onCreated, onChange }: UseAdo
               if (cell && key in nextGrid) nextGrid[key] = cell;
             }
             const m = parsed.meta;
-            const nextMeta: AdoptionMeta = m
-              ? {
-                  name: m.name || c.meta.name,
-                  sector: m.sector || c.meta.sector,
-                  geography: m.geography || c.meta.geography,
-                  stage: m.stage || c.meta.stage,
-                  summary: m.summary || c.meta.summary,
-                }
-              : c.meta;
+            const nextMeta: AdoptionMeta = {
+              ...c.meta,
+              name: m?.name || c.meta.name,
+              sector: m?.sector || c.meta.sector,
+              geography: m?.geography || c.meta.geography,
+              stage: m?.stage || c.meta.stage,
+              summary: m?.summary || c.meta.summary,
+              flowStep: parsed.flowStep != null ? Math.max(c.meta.flowStep, parsed.flowStep) : c.meta.flowStep,
+            };
             return { ...c, grid: nextGrid, meta: nextMeta };
           });
         }
@@ -218,10 +240,11 @@ export function useAdoptionConversation({ initial, onCreated, onChange }: UseAdo
     [update]
   );
 
-  // Creates the row on first use; a no-op if the conversation already exists.
+  // Creates the row on first use; a no-op if the conversation already exists
+  // (in which case `flow` is ignored — it only matters at creation time).
   // Concurrent callers (e.g. several dropped files each kicking off
   // extraction) share the same in-flight insert rather than racing.
-  function ensureCreated(): Promise<AdoptionConversation> {
+  function ensureCreated(flow: AdoptionFlow = ''): Promise<AdoptionConversation> {
     if (conversationRef.current) return Promise.resolve(conversationRef.current);
     if (creatingRef.current) return creatingRef.current;
 
@@ -231,7 +254,7 @@ export function useAdoptionConversation({ initial, onCreated, onChange }: UseAdo
         const { data, error } = await supabase
           .from('designs')
           .insert({
-            meta: EMPTY_META,
+            meta: { ...EMPTY_META, flow },
             grid_state: EMPTY_GRID,
             messages: [{ role: 'assistant', content: INITIAL_MESSAGE }],
           })
@@ -262,9 +285,9 @@ export function useAdoptionConversation({ initial, onCreated, onChange }: UseAdo
   // seeds the grid immediately rather than waiting for a chat turn. Never
   // blocks or surfaces an error to the user — the document's text still
   // reaches the model normally once they do send a message.
-  async function extractInsightsForAttachment(text: string) {
+  async function extractInsightsForAttachment(text: string, flow: AdoptionFlow) {
     try {
-      const c = await ensureCreated();
+      const c = await ensureCreated(flow);
 
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -295,15 +318,15 @@ export function useAdoptionConversation({ initial, onCreated, onChange }: UseAdo
           if (cell && key in nextGrid) nextGrid[key] = cell;
         }
         const m = parsed.meta;
-        const nextMeta: AdoptionMeta = m
-          ? {
-              name: m.name || cur.meta.name,
-              sector: m.sector || cur.meta.sector,
-              geography: m.geography || cur.meta.geography,
-              stage: m.stage || cur.meta.stage,
-              summary: m.summary || cur.meta.summary,
-            }
-          : cur.meta;
+        const nextMeta: AdoptionMeta = {
+          ...cur.meta,
+          name: m?.name || cur.meta.name,
+          sector: m?.sector || cur.meta.sector,
+          geography: m?.geography || cur.meta.geography,
+          stage: m?.stage || cur.meta.stage,
+          summary: m?.summary || cur.meta.summary,
+          flowStep: parsed.flowStep != null ? Math.max(cur.meta.flowStep, parsed.flowStep) : cur.meta.flowStep,
+        };
         return { ...cur, grid: nextGrid, meta: nextMeta };
       });
 
@@ -314,9 +337,10 @@ export function useAdoptionConversation({ initial, onCreated, onChange }: UseAdo
   }
 
   const handleUserSend = useCallback(
-    async (text: string) => {
+    async (text: string, flow: AdoptionFlow = '') => {
       const readyAttachments = pendingAttachments.filter((a) => a.state === 'ready');
-      const c = await ensureCreated();
+      const c = await ensureCreated(flow);
+      const activeFlow = c.meta.flow;
 
       if (readyAttachments.length > 0) {
         const images = readyAttachments.filter((a) => a.kind === 'image').map((a) => a.image!);
@@ -334,21 +358,28 @@ export function useAdoptionConversation({ initial, onCreated, onChange }: UseAdo
 
         setPendingAttachments([]);
 
-        sendMessage(c.id, c.messages, {
-          role: 'user',
-          content,
-          displayContent: displayLines.join('\n'),
-          images: images.length ? images : undefined,
-        });
+        sendMessage(
+          c.id,
+          c.messages,
+          {
+            role: 'user',
+            content,
+            displayContent: displayLines.join('\n'),
+            images: images.length ? images : undefined,
+          },
+          activeFlow,
+          c.grid,
+          c.meta
+        );
         return;
       }
 
-      sendMessage(c.id, c.messages, { role: 'user', content: text });
+      sendMessage(c.id, c.messages, { role: 'user', content: text }, activeFlow, c.grid, c.meta);
     },
     [pendingAttachments, sendMessage]
   );
 
-  function handleAttachFiles(files: File[]) {
+  function handleAttachFiles(files: File[], flow: AdoptionFlow = '') {
     for (const file of files) {
       const attachmentId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
@@ -380,7 +411,7 @@ export function useAdoptionConversation({ initial, onCreated, onChange }: UseAdo
             setPendingAttachments((s) =>
               s.map((a) => (a.id === attachmentId ? { ...a, state: 'ready', kind: 'text', text } : a))
             );
-            void extractInsightsForAttachment(text);
+            void extractInsightsForAttachment(text, flow);
           }
         } catch (err) {
           setPendingAttachments((s) =>

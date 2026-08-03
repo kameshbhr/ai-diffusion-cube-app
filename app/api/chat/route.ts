@@ -1,7 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { loadWikiContext, loadFrameworkContent, loadPathwayGenerationPrompt } from '@/lib/wiki-loader';
 import {
-  companionSystemPrompt,
+  explorerSystemPrompt,
+  contributorSystemPrompt,
   analysisDocSystemPrompt,
   planDocumentSystemPrompt,
   documentInsightSystemPrompt,
@@ -9,7 +10,7 @@ import {
 } from '@/lib/system-prompts';
 import { logConversation } from '@/lib/logger';
 import { createClient } from '@/lib/supabase/server';
-import { hasAnyRole } from '@/lib/roles';
+import { hasAnyRole, hasRole } from '@/lib/roles';
 import { EMPTY_GRID } from '@/lib/dimensions';
 import { parseGridUpdate } from '@/lib/grid-update';
 
@@ -29,7 +30,7 @@ function lastUserMessageText(messages: { role: string; content: unknown }[]): st
 }
 
 export async function POST(req: Request) {
-  const { messages, mode, grid, meta, versionNumber, designId } = await req.json();
+  const { messages, mode, grid, meta, versionNumber, designId, flow } = await req.json();
 
   if (!MODES.includes(mode)) {
     return Response.json({ error: 'Unknown mode.' }, { status: 400 });
@@ -42,6 +43,19 @@ export async function POST(req: Request) {
   const approved = await hasAnyRole(supabase);
   if (!approved) {
     return Response.json({ error: 'Your account is awaiting approval.' }, { status: 403 });
+  }
+
+  // A companion turn's flow is fixed by the adoption's own meta.flow, chosen
+  // once on the welcome screen — but the UI showing that choice is not the
+  // real enforcement boundary, so re-check it against the caller's actual
+  // roles here (same pattern the old `design` mode used for `adopter`).
+  if (mode === 'companion') {
+    if (flow === 'contributor' && !(await hasRole(supabase, 'pathway_contributor'))) {
+      return Response.json({ error: 'The Contributor flow requires the Contributor role.' }, { status: 403 });
+    }
+    if (flow === 'explorer' && !(await hasRole(supabase, 'adopter'))) {
+      return Response.json({ error: 'The Explorer flow requires the Adopter role.' }, { status: 403 });
+    }
   }
 
   const [wikiContent, frameworkContent] = await Promise.all([loadWikiContext(), loadFrameworkContent()]);
@@ -70,8 +84,10 @@ export async function POST(req: Request) {
       meta ?? {},
       generatedAt
     );
+  } else if (flow === 'contributor') {
+    systemPrompt = contributorSystemPrompt(wikiContent, frameworkContent, grid ?? EMPTY_GRID, meta ?? {});
   } else {
-    systemPrompt = companionSystemPrompt(wikiContent, frameworkContent);
+    systemPrompt = explorerSystemPrompt(wikiContent, frameworkContent, grid ?? EMPTY_GRID, meta ?? {});
   }
 
   const stream = await anthropic.messages.stream({

@@ -17,6 +17,13 @@ export interface ParsedGridUpdate {
   // companionSystemPrompt's grid_update contract) — used server-side to tag
   // the adoption_queries log, not rendered anywhere in the UI.
   pathwaysReferenced?: string[];
+  // Which numbered step of the explorer/contributor flow the model reports
+  // being on (see gridUpdateContract in lib/system-prompts.ts). Persisted
+  // into AdoptionMeta.flowStep and re-injected into the prompt every turn —
+  // the grid_update block itself is stripped before a message is stored, so
+  // the model can't "read back" its own past JSON from history; the app has
+  // to carry this state forward explicitly instead.
+  flowStep?: number;
 }
 
 export function parseGridUpdate(text: string): ParsedGridUpdate | null {
@@ -24,7 +31,12 @@ export function parseGridUpdate(text: string): ParsedGridUpdate | null {
   if (!match) return null;
   try {
     const parsed = JSON.parse(match[1]);
-    return { cells: parsed.cells ?? {}, meta: parsed.meta, pathwaysReferenced: parsed.pathwaysReferenced };
+    return {
+      cells: parsed.cells ?? {},
+      meta: parsed.meta,
+      pathwaysReferenced: parsed.pathwaysReferenced,
+      flowStep: typeof parsed.flowStep === 'number' ? parsed.flowStep : undefined,
+    };
   } catch {
     return null;
   }

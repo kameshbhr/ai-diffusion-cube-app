@@ -15,9 +15,11 @@ interface Props {
   email: string | null;
   adoptions: AdoptionSummary[];
   isAdmin?: boolean;
+  canExplore?: boolean;
+  canContribute?: boolean;
 }
 
-export default function Sidebar({ email, adoptions, isAdmin }: Props) {
+export default function Sidebar({ email, adoptions, isAdmin, canExplore, canContribute }: Props) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [lastPathname, setLastPathname] = useState(pathname);
@@ -30,10 +32,16 @@ export default function Sidebar({ email, adoptions, isAdmin }: Props) {
     if (mobileOpen) setMobileOpen(false);
   }
 
+  // Explore/Contribute are separate entry points (each starts a new
+  // adoption in that flow) rather than a choice made inline on a shared
+  // welcome screen — mirrors the pre-revamp Explore/Design split. The wiki
+  // itself is corpus material for the companion's prompts now, not a
+  // user-facing nav destination (the pages still exist at /wiki, just
+  // unlinked here).
   const navItems = [
-    { href: '/', label: 'New adoption' },
+    ...(canExplore ? [{ href: '/explore', label: 'Explore' }] : []),
+    ...(canContribute ? [{ href: '/contribute', label: 'Contribute' }] : []),
     { href: '/adoptions', label: 'Your adoptions' },
-    { href: '/wiki', label: 'The Wiki' },
     ...(isAdmin ? [{ href: '/admin', label: 'Admin' }] : []),
   ];
 
