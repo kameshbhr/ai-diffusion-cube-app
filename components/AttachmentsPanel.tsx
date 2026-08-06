@@ -47,7 +47,7 @@ export default function AttachmentsPanel({ attachments, uploadedFileNames = [], 
 
   return (
     <div className="flex flex-col h-full">
-      <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-ink-soft mb-2">Files</p>
+      <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-ink-soft mb-3">Files</p>
 
       <div
         onDragEnter={handleDragEnter}

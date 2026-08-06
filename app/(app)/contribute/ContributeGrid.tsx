@@ -1,12 +1,10 @@
 'use client';
 
 import { Suspense, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import AdoptionWorkspace from '@/components/AdoptionWorkspace';
 import { AdoptionConversation } from '@/lib/adoption-conversation';
 import { createClient } from '@/lib/supabase/client';
-import { hasRole } from '@/lib/roles';
 import { fetchAdoptionsList, setAdoptionsListCache } from '@/lib/adoptions-cache';
 
 function formatRelativeTime(iso: string): string {
@@ -18,9 +16,11 @@ function formatRelativeTime(iso: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-type Selection = string | null;
+// null = grid, 'new' = fresh contributor workspace, otherwise an existing
+// adoption's id.
+type Selection = string | 'new' | null;
 
-function AdoptionsPageContent() {
+function ContributeGridContent() {
   const searchParams = useSearchParams();
   const openId = searchParams.get('open');
 
@@ -29,8 +29,6 @@ function AdoptionsPageContent() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
   const [appliedOpenId, setAppliedOpenId] = useState<string | null>(null);
-  const [canExplore, setCanExplore] = useState(false);
-  const [canContribute, setCanContribute] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +40,7 @@ function AdoptionsPageContent() {
       })
       .catch(() => {
         if (cancelled) return;
-        setLoadError('Could not load your adoptions.');
+        setLoadError('Could not load your contributions.');
         setLoaded(true);
       });
     return () => {
@@ -50,32 +48,26 @@ function AdoptionsPageContent() {
     };
   }, []);
 
-  useEffect(() => {
-    const supabase = createClient();
-    Promise.all([hasRole(supabase, 'adopter'), hasRole(supabase, 'pathway_contributor')]).then(
-      ([explorer, contributor]) => {
-        setCanExplore(explorer);
-        setCanContribute(contributor);
-      }
-    );
-  }, []);
+  // The full list is shared (same cache as /adoptions) — this page only
+  // shows the Contributor-flow slice of it.
+  const contributions = adoptions.filter((a) => a.meta.flow === 'contributor');
 
-  // Deep-links from the sidebar (/adoptions?open=<id>). Adjusted during
-  // render (React's documented pattern) — tracks the last-applied id so a
-  // different link still switches, while "← All adoptions" stays put.
-  if (loaded && openId && openId !== appliedOpenId && adoptions.some((a) => a.id === openId)) {
+  // Deep-links (e.g. /contribute?open=<id>). Adjusted during render (React's
+  // documented pattern) — tracks the last-applied id so a different link
+  // still switches, while "← All contributions" stays put.
+  if (loaded && openId && openId !== appliedOpenId && contributions.some((a) => a.id === openId)) {
     setAppliedOpenId(openId);
     setSelection(openId);
   }
 
-  async function deleteAdoption(e: React.MouseEvent, id: string) {
+  async function deleteContribution(e: React.MouseEvent, id: string) {
     e.stopPropagation();
-    if (!window.confirm('Delete this adoption? This cannot be undone.')) return;
+    if (!window.confirm('Delete this contribution? This cannot be undone.')) return;
 
     const supabase = createClient();
     const { error } = await supabase.from('designs').delete().eq('id', id);
     if (error) {
-      setLoadError('Could not delete that adoption. Try again.');
+      setLoadError('Could not delete that contribution. Try again.');
       return;
     }
     setAdoptions((prev) => {
@@ -85,12 +77,12 @@ function AdoptionsPageContent() {
     });
   }
 
-  if (selection) {
-    const existing = adoptions.find((a) => a.id === selection) ?? null;
+  if (selection === 'new') {
     return (
       <AdoptionWorkspace
-        key={selection}
-        initial={existing}
+        key="new"
+        initial={null}
+        fixedFlow="contributor"
         onCreated={(c) =>
           setAdoptions((prev) => {
             const next = [c, ...prev];
@@ -109,47 +101,52 @@ function AdoptionsPageContent() {
     );
   }
 
+  if (selection) {
+    const existing = contributions.find((a) => a.id === selection) ?? null;
+    return (
+      <AdoptionWorkspace
+        key={selection}
+        initial={existing}
+        onChange={(c) =>
+          setAdoptions((prev) => {
+            const next = prev.map((a) => (a.id === c.id ? c : a));
+            setAdoptionsListCache(next);
+            return next;
+          })
+        }
+      />
+    );
+  }
+
   return (
     <div className="flex-1 overflow-y-auto bg-paper p-4 sm:p-8">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-medium tracking-tight text-navy">Your adoptions</h1>
+          <h1 className="font-display text-2xl font-medium tracking-tight text-navy">Your contributions</h1>
           <p className="mt-1 text-sm text-ink-soft">
-            Every adoption you&apos;ve worked through, and where each one stands.
+            Every deployment write-up you&apos;ve turned into a pathway draft, and where each one stands.
           </p>
         </div>
-        <div className="flex flex-shrink-0 gap-2">
-          {canExplore && (
-            <Link
-              href="/explore"
-              className="rounded-lg bg-navy px-4 py-2 text-sm font-medium text-white transition hover:bg-coral"
-            >
-              + Explore
-            </Link>
-          )}
-          {canContribute && (
-            <Link
-              href="/contribute"
-              className="rounded-lg border border-navy/20 px-4 py-2 text-sm font-medium text-navy transition hover:border-coral hover:text-coral"
-            >
-              + Contribute
-            </Link>
-          )}
-        </div>
+        <button
+          onClick={() => setSelection('new')}
+          className="flex-shrink-0 rounded-lg bg-navy px-4 py-2 text-sm font-medium text-white transition hover:bg-coral"
+        >
+          + New Contribution
+        </button>
       </div>
 
       {!loaded ? (
         <p className="text-sm text-ink-soft">Loading…</p>
-      ) : adoptions.length === 0 ? (
+      ) : contributions.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-          <p className="text-sm text-ink-soft">Start a new adoption from the buttons above to see it here.</p>
+          <p className="text-sm text-ink-soft">Start a new contribution from the button above to see it here.</p>
           {loadError && <p className="text-xs text-coral">{loadError}</p>}
         </div>
       ) : (
         <>
           {loadError && <p className="mb-4 text-xs text-coral">{loadError}</p>}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {adoptions.map((a) => (
+            {contributions.map((a) => (
               <div
                 key={a.id}
                 role="button"
@@ -165,13 +162,13 @@ function AdoptionsPageContent() {
               >
                 <button
                   type="button"
-                  onClick={(e) => deleteAdoption(e, a.id)}
-                  aria-label="Delete adoption"
+                  onClick={(e) => deleteContribution(e, a.id)}
+                  aria-label="Delete contribution"
                   className="absolute top-3 right-3 text-ink-soft/50 opacity-0 transition hover:text-coral group-hover:opacity-100"
                 >
                   🗑
                 </button>
-                <div className="pr-5 font-display font-medium text-navy">{a.meta.name || 'New adoption'}</div>
+                <div className="pr-5 font-display font-medium text-navy">{a.meta.name || 'New contribution'}</div>
                 {(a.meta.sector || a.meta.geography) && (
                   <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-ink-soft">
                     {[a.meta.sector, a.meta.geography].filter(Boolean).join(' · ')}
@@ -188,10 +185,10 @@ function AdoptionsPageContent() {
   );
 }
 
-export default function AdoptionsPage() {
+export default function ContributeGrid() {
   return (
     <Suspense fallback={null}>
-      <AdoptionsPageContent />
+      <ContributeGridContent />
     </Suspense>
   );
 }

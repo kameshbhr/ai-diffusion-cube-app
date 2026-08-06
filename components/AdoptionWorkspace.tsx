@@ -3,8 +3,6 @@
 import { useRef, useState } from 'react';
 import ChatPanel from '@/components/ChatPanel';
 import AttachmentsPanel from '@/components/AttachmentsPanel';
-import DimensionChips from '@/components/DimensionChips';
-import AdoptionPlanModal from '@/components/AdoptionPlanModal';
 import PathwayDraftCanvas from '@/components/PathwayDraftCanvas';
 import {
   AdoptionConversation,
@@ -14,36 +12,12 @@ import {
   useAdoptionConversation,
 } from '@/lib/adoption-conversation';
 import {
-  DesignDocumentRow,
-  DocType,
-  formatVersionLabel,
-  getLatestDesignDocument,
-  hashConversationState,
-  insertDesignDocumentVersion,
-  listDesignDocumentVersions,
-} from '@/lib/design-documents';
-import {
   PathwaySubmissionVersionRow,
   getPublishedContentBySubmission,
   insertPathwaySubmissionVersion,
   listPathwaySubmissionVersions,
   upsertPathwaySubmission,
 } from '@/lib/pathway-submission-versions';
-
-const DOC_LABELS: Record<DocType, { title: string; mode: string; loadingLabel: string; filenameSuffix: string }> = {
-  analysis: {
-    title: 'Analysis Doc',
-    mode: 'analysis-doc',
-    loadingLabel: 'Generating analysis doc…',
-    filenameSuffix: 'analysis-doc',
-  },
-  plan: {
-    title: 'Plan Document',
-    mode: 'plan-document',
-    loadingLabel: 'Generating plan document…',
-    filenameSuffix: 'plan-document',
-  },
-};
 
 interface Props {
   initial: AdoptionConversation | null;
@@ -55,7 +29,6 @@ interface Props {
   canContribute?: boolean;
   onCreated?: (c: AdoptionConversation) => void;
   onChange?: (c: AdoptionConversation) => void;
-  onBack?: () => void;
 }
 
 export default function AdoptionWorkspace({
@@ -65,7 +38,6 @@ export default function AdoptionWorkspace({
   canContribute = false,
   onCreated,
   onChange,
-  onBack,
 }: Props) {
   const {
     conversation,
@@ -85,12 +57,6 @@ export default function AdoptionWorkspace({
 
   const [welcomeInput, setWelcomeInput] = useState('');
   const [isDragging, setIsDragging] = useState(false);
-  const [activeDocType, setActiveDocType] = useState<DocType | null>(null);
-  const [docLoading, setDocLoading] = useState(false);
-  const [docMarkdown, setDocMarkdown] = useState('');
-  const [docError, setDocError] = useState<string | null>(null);
-  const [docVersionNumber, setDocVersionNumber] = useState<number | null>(null);
-  const [docVersionRows, setDocVersionRows] = useState<DesignDocumentRow[]>([]);
   const [filesOpen, setFilesOpen] = useState(false);
   const [headerExpanded, setHeaderExpanded] = useState(true);
   const [pathwayDraftOpen, setPathwayDraftOpen] = useState(false);
@@ -194,84 +160,6 @@ export default function AdoptionWorkspace({
     }
   }
 
-  // Handles both documents — same flow, different mode. Cache-checked
-  // against the conversation's current content hash; only calls the model
-  // on a miss, then stores the result as the next version.
-  async function handleGenerateDocument(docType: DocType) {
-    if (!conversation) return;
-    const { title, mode } = DOC_LABELS[docType];
-
-    setActiveDocType(docType);
-    setDocLoading(true);
-    setDocError(null);
-    setDocMarkdown('');
-    setDocVersionNumber(null);
-    setDocVersionRows([]);
-
-    try {
-      const contentHash = hashConversationState(conversation.messages, conversation.grid);
-      const latest = await getLatestDesignDocument(conversation.id, docType);
-      const allVersions = await listDesignDocumentVersions(conversation.id, docType);
-      setDocVersionRows(allVersions);
-
-      if (latest && latest.content_hash === contentHash) {
-        setDocMarkdown(latest.content);
-        setDocVersionNumber(latest.version_number);
-        setDocLoading(false);
-        return;
-      }
-
-      const nextVersionNumber = (latest?.version_number ?? 0) + 1;
-
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [...toApiMessages(conversation.messages), { role: 'user', content: `Generate the ${title.toLowerCase()} now.` }],
-          mode,
-          grid: conversation.grid,
-          meta: conversation.meta,
-          versionNumber: nextVersionNumber,
-        }),
-      });
-
-      if (!res.body) throw new Error('No response from the server.');
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let text = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        text += decoder.decode(value, { stream: true });
-        setDocMarkdown(text);
-      }
-
-      const saved = await insertDesignDocumentVersion(
-        conversation.id,
-        docType,
-        contentHash,
-        text,
-        latest?.version_number ?? 0
-      );
-      if (saved) {
-        setDocVersionNumber(saved.version_number);
-        setDocVersionRows((prev) => [saved, ...prev]);
-      }
-    } catch {
-      setDocError(`Could not generate the ${title.toLowerCase()}. Try again.`);
-    } finally {
-      setDocLoading(false);
-    }
-  }
-
-  function handleSelectVersion(versionNumber: number) {
-    const row = docVersionRows.find((v) => v.version_number === versionNumber);
-    if (!row) return;
-    setDocVersionNumber(row.version_number);
-    setDocMarkdown(row.content);
-  }
-
   function handleWelcomeFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = '';
@@ -334,7 +222,7 @@ export default function AdoptionWorkspace({
 
         <div className="w-full max-w-2xl animate-fade-in-up">
           <p className="font-mono text-xs uppercase tracking-[0.2em] text-coral">
-            {fixedFlow === 'contributor' ? 'Contribute a Pathway' : fixedFlow === 'explorer' ? 'Explore Your Adoption' : 'Adoption Companion'}
+            {fixedFlow === 'contributor' ? 'Contribute a Pathway' : fixedFlow === 'explorer' ? 'Explore Your Adoption' : 'Diffusion Cube'}
           </p>
           <h1 className="mt-4 font-display text-3xl font-medium leading-[1.15] tracking-tight text-navy sm:text-4xl">
             {fixedFlow === 'contributor' ? (
@@ -457,15 +345,8 @@ export default function AdoptionWorkspace({
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden bg-paper">
       {/* Workspace header: title, sector/geography/stage, summary, dimension chips */}
-      <div className="border-b border-navy/10 p-4">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          {onBack ? (
-            <button onClick={onBack} className="text-xs font-medium text-ink-soft transition hover:text-coral">
-              ← All adoptions
-            </button>
-          ) : (
-            <span />
-          )}
+      <div className="border-b border-navy/10 p-5">
+        <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
           <div className="flex flex-shrink-0 items-center gap-2">
             <button
               onClick={() => setFilesOpen(true)}
@@ -478,21 +359,9 @@ export default function AdoptionWorkspace({
                 onClick={() => handleOpenPathwayDraft()}
                 className="rounded-lg border border-navy/15 px-3 py-1.5 text-xs font-medium text-ink-soft transition hover:border-coral hover:text-coral"
               >
-                Remap to Pathway Doc
+                Generate Pathway Wiki
               </button>
             )}
-            <button
-              onClick={() => handleGenerateDocument('plan')}
-              className="rounded-lg border border-navy/20 px-3.5 py-1.5 text-xs font-medium text-navy transition hover:border-coral hover:text-coral"
-            >
-              Plan Document
-            </button>
-            <button
-              onClick={() => handleGenerateDocument('analysis')}
-              className="rounded-lg bg-navy px-3.5 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-coral"
-            >
-              Analysis Doc
-            </button>
           </div>
         </div>
 
@@ -532,13 +401,6 @@ export default function AdoptionWorkspace({
             )}
           </>
         )}
-        <div className="mt-3">
-          <DimensionChips
-            grid={conversation.grid}
-            currentStage={conversation.meta.stage}
-            onSelect={(name) => handleUserSend(`Tell me about the ${name} dimension of my adoption.`, flow)}
-          />
-        </div>
       </div>
 
       {/* Chat + files (+ the pathway draft canvas, alongside chat rather than over it) */}
@@ -550,6 +412,7 @@ export default function AdoptionWorkspace({
             pendingAttachments={pendingAttachments}
             loading={loading}
             placeholder="Ask, share, or think out loud…"
+            grid={conversation.grid}
           />
         </div>
 
@@ -571,13 +434,27 @@ export default function AdoptionWorkspace({
         )}
 
         {!pathwayDraftOpen && (
-          <div className="hidden w-[260px] flex-shrink-0 overflow-y-auto border-l border-navy/10 p-3 md:block">
-            <AttachmentsPanel
-              attachments={pendingAttachments}
-              uploadedFileNames={extractUploadedFileNames(conversation.messages)}
-              onAttachFiles={handleAttachFiles}
-              onRemoveAttachment={removeAttachment}
-            />
+          <div className="group relative hidden h-full flex-shrink-0 md:block">
+            {/* Slim edge tab — always in-flow, doesn't steal chat width. The
+                full panel below is absolutely positioned and only reveals on
+                hover, so files stay out of the way until actually needed.
+                inset-y-0 (rather than top-0 + h-full) anchors both edges
+                directly to this wrapper's height, so it reliably fills the
+                full column instead of depending on percentage-height
+                resolving through an absolutely positioned descendant. */}
+            <div className="flex h-full w-8 cursor-default items-center justify-center border-l border-navy/10 text-ink-soft transition group-hover:border-coral/40 group-hover:text-coral">
+              <span aria-hidden className="rotate-180 font-mono text-[10px] uppercase tracking-[0.2em] [writing-mode:vertical-lr]">
+                Files
+              </span>
+            </div>
+            <div className="invisible absolute inset-y-0 right-0 z-30 w-[280px] overflow-y-auto border-l border-navy/10 bg-paper p-3 opacity-0 shadow-lg transition-opacity duration-150 group-hover:visible group-hover:opacity-100">
+              <AttachmentsPanel
+                attachments={pendingAttachments}
+                uploadedFileNames={extractUploadedFileNames(conversation.messages)}
+                onAttachFiles={handleAttachFiles}
+                onRemoveAttachment={removeAttachment}
+              />
+            </div>
           </div>
         )}
 
@@ -606,23 +483,6 @@ export default function AdoptionWorkspace({
           </div>
         )}
       </div>
-
-      {activeDocType && (
-        <AdoptionPlanModal
-          title={DOC_LABELS[activeDocType].title}
-          loadingLabel={DOC_LABELS[activeDocType].loadingLabel}
-          filenameSuffix={DOC_LABELS[activeDocType].filenameSuffix}
-          markdown={docMarkdown}
-          loading={docLoading}
-          error={docError}
-          deploymentName={conversation.meta.name}
-          version={docVersionNumber != null ? formatVersionLabel(docVersionNumber) : undefined}
-          versions={docVersionRows}
-          selectedVersionNumber={docVersionNumber ?? undefined}
-          onSelectVersion={handleSelectVersion}
-          onClose={() => setActiveDocType(null)}
-        />
-      )}
     </div>
   );
 }

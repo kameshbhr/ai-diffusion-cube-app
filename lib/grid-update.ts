@@ -1,5 +1,13 @@
 import type { CellState } from '@/lib/dimensions';
 
+// Step 5 (Generate Output) wraps the Deep Dive Report / Holistic Adoption
+// Plan's full markdown in this tag pair — shared between ChatPanel (renders
+// a Download PDF card in place of it) and adoption-conversation.ts (which
+// stops live-streaming the message body the moment this tag appears, so the
+// document reveals as a finished whole rather than typing itself out).
+export const DELIVERABLE_START = '<deliverable>';
+export const DELIVERABLE_END = '</deliverable>';
+
 // Split out from lib/adoption-conversation.ts so it can be imported from
 // server code (app/api/chat/route.ts) without pulling in that file's React
 // hooks — Next.js refuses to bundle a route handler that transitively
@@ -12,6 +20,23 @@ export interface ParsedGridUpdate {
     geography?: string;
     stage?: string;
     summary?: string;
+    // The model's own working reasoning state — carried forward every turn
+    // the same way flowStep is, since none of this survives in replayed
+    // message history either (see AdoptionMeta in adoption-conversation.ts).
+    hypothesis?: string;
+    biggestRisk?: string;
+    confidence?: string;
+    decision?: string;
+    conversationMode?: string;
+    // Explorer-only: the Cube's own working stage/coverage read, carried
+    // forward the same way — see CubeAssessment in system-prompts.ts.
+    cubeAssessment?: {
+      currentStage?: string;
+      coveredDimensions?: string[];
+      partialDimensions?: string[];
+      missingDimensions?: string[];
+      assessmentConfirmed?: boolean;
+    };
   };
   // Pathway slugs the companion actually drew on this turn (see
   // companionSystemPrompt's grid_update contract) — used server-side to tag

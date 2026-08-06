@@ -229,23 +229,6 @@ export const DENSITY_SYMBOLS: Record<CellDensity, string> = {
   3: '●●●',
 };
 
-// Coverage-status semantic ported from the pre-revamp app's FaceStatus/
-// STATUS_COLORS (main:lib/dimensions.ts) — reused for the dimension status
-// chips (components/DimensionChips.tsx), which show ONE status per dimension
-// (at the deployment's current stage) rather than the full 4×4 grid.
-export type DimensionStatus = 'dark' | 'red' | 'amber' | 'green';
-
-export const STATUS_COLORS: Record<DimensionStatus, string> = {
-  dark: '#1A3A5C',
-  red: '#D64045',
-  amber: '#E8A838',
-  green: '#3D8B37',
-};
-
-export function densityToStatus(density: CellDensity): DimensionStatus {
-  return (['dark', 'red', 'amber', 'green'] as const)[density];
-}
-
 // Compact structural summary injected into prompts alongside the wiki's
 // framework doc — gives the model the exact dimension codes, sub-category
 // letters, and per-stage weights this app's JSON contract uses.

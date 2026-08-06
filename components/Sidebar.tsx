@@ -4,10 +4,11 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import SignOutButton from '@/components/SignOutButton';
+import { createClient } from '@/lib/supabase/client';
 
 interface AdoptionSummary {
   id: string;
-  meta: { name?: string } | null;
+  meta: { name?: string; flow?: string } | null;
   updated_at: string;
 }
 
@@ -23,6 +24,22 @@ export default function Sidebar({ email, adoptions, isAdmin, canExplore, canCont
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [lastPathname, setLastPathname] = useState(pathname);
+  // Optimistic client-side removal — `adoptions` itself is a server-fetched
+  // prop (re-populated on navigation), so a deleted row is masked out here
+  // rather than mutated in place; it's simply absent again on the next
+  // real fetch anyway.
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+
+  async function handleDeleteExploration(e: React.MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!window.confirm('Delete this exploration? This cannot be undone.')) return;
+
+    const supabase = createClient();
+    const { error } = await supabase.from('designs').delete().eq('id', id);
+    if (error) return;
+    setDeletedIds((prev) => new Set(prev).add(id));
+  }
 
   // Auto-close the mobile drawer whenever the route changes (link clicked).
   // Adjusted during render (React's documented pattern) rather than in an
@@ -41,12 +58,21 @@ export default function Sidebar({ email, adoptions, isAdmin, canExplore, canCont
   const navItems = [
     ...(canExplore ? [{ href: '/explore', label: 'Explore' }] : []),
     ...(canContribute ? [{ href: '/contribute', label: 'Contribute' }] : []),
-    { href: '/adoptions', label: 'Your adoptions' },
     ...(isAdmin ? [{ href: '/admin', label: 'Admin' }] : []),
   ];
 
+  // Contributions now live in their own grid at /contribute — this list is
+  // Explorer-only, so it's a real "recent explorations" shortcut rather than
+  // a mixed-flow dump.
+  const recentExplorations = adoptions.filter((a) => a.meta?.flow === 'explorer' && !deletedIds.has(a.id));
+
   const body = (
     <>
+      <Link href="/" className="flex flex-col items-center gap-0.5 border-b border-navy/10 px-4 py-4 text-center transition hover:bg-paper-dim">
+        <span className="font-display text-base font-medium tracking-tight text-navy">100 Pathways</span>
+        <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-ink-soft">Diffusion Cube</span>
+      </Link>
+
       <nav className="space-y-0.5 p-3">
         {navItems.map((item) => {
           const active = item.href === '/' ? pathname === '/' : pathname?.startsWith(item.href);
@@ -65,21 +91,30 @@ export default function Sidebar({ email, adoptions, isAdmin, canExplore, canCont
       </nav>
 
       <div className="flex-1 overflow-y-auto px-3 pb-3">
-        {adoptions.length > 0 && (
+        {recentExplorations.length > 0 && (
           <>
             <p className="mt-2 mb-1 px-3 font-mono text-[10px] uppercase tracking-[0.15em] text-ink-soft">
-              Recent
+              Recent Explorations
             </p>
             <div className="space-y-0.5">
-              {adoptions.map((a) => (
-                <Link
-                  key={a.id}
-                  href={`/adoptions?open=${a.id}`}
-                  className="block truncate rounded-lg px-3 py-1.5 text-xs text-ink-soft transition hover:bg-paper-dim hover:text-navy"
-                  title={a.meta?.name || 'New adoption'}
-                >
-                  {a.meta?.name || 'New adoption'}
-                </Link>
+              {recentExplorations.map((a) => (
+                <div key={a.id} className="group/item flex items-center rounded-lg hover:bg-paper-dim">
+                  <Link
+                    href={`/adoptions?open=${a.id}`}
+                    className="block flex-1 truncate px-3 py-1.5 text-xs text-ink-soft transition group-hover/item:text-navy"
+                    title={a.meta?.name || 'New exploration'}
+                  >
+                    {a.meta?.name || 'New exploration'}
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={(e) => handleDeleteExploration(e, a.id)}
+                    aria-label="Delete exploration"
+                    className="flex-shrink-0 px-2 text-ink-soft/50 opacity-0 transition hover:text-coral group-hover/item:opacity-100"
+                  >
+                    🗑
+                  </button>
+                </div>
               ))}
             </div>
           </>
@@ -97,8 +132,8 @@ export default function Sidebar({ email, adoptions, isAdmin, canExplore, canCont
 
   return (
     <>
-      {/* Mobile trigger bar (SiteHeader owns branding; this is just the drawer toggle) */}
-      <div className="flex h-10 items-center gap-2 border-b border-navy/10 bg-paper px-4 md:hidden">
+      {/* Mobile trigger bar — the sidebar (opened via this) owns branding now that there's no separate top header */}
+      <div className="flex h-12 items-center gap-3 border-b border-navy/10 bg-paper px-4 md:hidden">
         <button
           onClick={() => setMobileOpen(true)}
           aria-label="Open menu"
@@ -106,7 +141,10 @@ export default function Sidebar({ email, adoptions, isAdmin, canExplore, canCont
         >
           ☰
         </button>
-        <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-ink-soft">Menu</span>
+        <Link href="/" className="flex items-baseline gap-1.5">
+          <span className="font-display text-sm font-medium tracking-tight text-navy">100 Pathways</span>
+          <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-ink-soft">/ Diffusion Cube</span>
+        </Link>
       </div>
 
       {mobileOpen && (

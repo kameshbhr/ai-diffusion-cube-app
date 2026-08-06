@@ -25,7 +25,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Adoption Companion | 100 Pathways",
+  title: "Diffusion Cube | 100 Pathways",
   description:
     "Understand where your AI adoption stands — grounded in what real deployments learned. Part of 100 Pathways.",
 };

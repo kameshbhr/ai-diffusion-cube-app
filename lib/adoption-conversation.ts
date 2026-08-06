@@ -3,9 +3,32 @@ import { EMPTY_GRID, type GridState } from '@/lib/dimensions';
 import { Message } from '@/components/ChatPanel';
 import { createClient } from '@/lib/supabase/client';
 import { extractTextFromFile, fileToImageBlock, getFileExtension, isImageFile } from '@/lib/extract-text';
-import { parseGridUpdate, stripGridUpdate } from '@/lib/grid-update';
+import { parseGridUpdate, stripGridUpdate, DELIVERABLE_START } from '@/lib/grid-update';
 
 export type AdoptionFlow = 'explorer' | 'contributor' | '';
+
+// Explorer-only working assessment: the Cube's own current stage/coverage
+// read and whether the adopter has confirmed it — distinct from `stage`
+// above, which is only ever filled from the user's own words. Dimension
+// names (coveredDimensions etc.) are the four dimension display names
+// (Persona, Solution, Institution, Ecosystem) — any dimension absent from
+// all three arrays is implicitly Unknown, so there's no fourth array for it.
+// See CubeAssessment in lib/system-prompts.ts.
+export interface CubeAssessment {
+  currentStage: string;
+  coveredDimensions: string[];
+  partialDimensions: string[];
+  missingDimensions: string[];
+  assessmentConfirmed: boolean;
+}
+
+export const EMPTY_CUBE_ASSESSMENT: CubeAssessment = {
+  currentStage: '',
+  coveredDimensions: [],
+  partialDimensions: [],
+  missingDimensions: [],
+  assessmentConfirmed: false,
+};
 
 export interface AdoptionMeta {
   name: string;
@@ -22,6 +45,19 @@ export interface AdoptionMeta {
   // block itself is stripped before a message is stored — the model can't
   // "read back" its own past JSON from history.
   flowStep: number;
+  // The model's own working reasoning state, same carry-forward mechanism as
+  // flowStep: its current best-guess hypothesis, the biggest open risk, its
+  // confidence in that hypothesis, the decision it believes the user is
+  // actually working toward, and its own conversational posture. Re-injected
+  // every turn via currentProgressBlock so the model revises its prior
+  // reasoning instead of re-deriving it from scratch each time.
+  hypothesis: string;
+  biggestRisk: string;
+  confidence: string;
+  decision: string;
+  conversationMode: string;
+  // Explorer-only — see CubeAssessment above.
+  cubeAssessment: CubeAssessment;
 }
 
 export const EMPTY_META: AdoptionMeta = {
@@ -32,6 +68,12 @@ export const EMPTY_META: AdoptionMeta = {
   summary: '',
   flow: '',
   flowStep: 0,
+  hypothesis: '',
+  biggestRisk: '',
+  confidence: '',
+  decision: '',
+  conversationMode: '',
+  cubeAssessment: EMPTY_CUBE_ASSESSMENT,
 };
 
 export { EMPTY_GRID };
@@ -51,9 +93,6 @@ export function extractUploadedFileNames(messages: Message[]): string[] {
   }
   return names;
 }
-
-export const INITIAL_MESSAGE =
-  "Welcome. This is a space to work through your AI adoption — wherever it stands — alongside what real deployments have learned.\n\nYou can start two ways:\n📄 Share documents — a concept note, proposal, deck, or anything describing what you're working on. I'll read them and tell you what they establish.\n💬 Just talk — describe your adoption, or ask about anything on your mind.";
 
 // A staged attachment carries its extracted payload once processed, so it can
 // be folded into the actual API message once the user presses Enter.
@@ -219,17 +258,52 @@ export function useAdoptionConversation({ initial, onCreated, onChange }: UseAdo
               stage: m?.stage || c.meta.stage,
               summary: m?.summary || c.meta.summary,
               flowStep: parsed.flowStep != null ? Math.max(c.meta.flowStep, parsed.flowStep) : c.meta.flowStep,
+              hypothesis: m?.hypothesis || c.meta.hypothesis,
+              biggestRisk: m?.biggestRisk || c.meta.biggestRisk,
+              confidence: m?.confidence || c.meta.confidence,
+              decision: m?.decision || c.meta.decision,
+              conversationMode: m?.conversationMode || c.meta.conversationMode,
+              cubeAssessment: m?.cubeAssessment
+                ? {
+                    currentStage: m.cubeAssessment.currentStage ?? c.meta.cubeAssessment.currentStage,
+                    coveredDimensions: m.cubeAssessment.coveredDimensions ?? c.meta.cubeAssessment.coveredDimensions,
+                    partialDimensions: m.cubeAssessment.partialDimensions ?? c.meta.cubeAssessment.partialDimensions,
+                    missingDimensions: m.cubeAssessment.missingDimensions ?? c.meta.cubeAssessment.missingDimensions,
+                    assessmentConfirmed:
+                      m.cubeAssessment.assessmentConfirmed ?? c.meta.cubeAssessment.assessmentConfirmed,
+                  }
+                : c.meta.cubeAssessment,
             };
             return { ...c, grid: nextGrid, meta: nextMeta };
           });
         }
 
+        // Step 5 (Generate Output) wraps the full document in <deliverable>
+        // tags — once that tag shows up, stop live-typing the message out.
+        // Freeze the visible content at whatever came before the tag (the
+        // short intro sentence) and show a loading state instead, so the
+        // document itself appears as a finished whole once the stream
+        // completes below, rather than streaming in piece by piece.
+        const stripped = stripGridUpdate(assistantText);
+        const deliverableIdx = stripped.indexOf(DELIVERABLE_START);
         update((c) => {
           const msgs = [...c.messages];
-          msgs[msgs.length - 1] = { role: 'assistant', content: stripGridUpdate(assistantText) };
+          msgs[msgs.length - 1] =
+            deliverableIdx === -1
+              ? { role: 'assistant', content: stripped }
+              : { role: 'assistant', content: stripped.slice(0, deliverableIdx).trim(), generatingDoc: true };
           return { ...c, messages: msgs };
         });
       }
+
+      // Final reveal — for a deliverable message this is the first time the
+      // real content (including the finished document) replaces the loading
+      // state; for a normal message it's a no-op past what's already shown.
+      update((c) => {
+        const msgs = [...c.messages];
+        msgs[msgs.length - 1] = { role: 'assistant', content: stripGridUpdate(assistantText) };
+        return { ...c, messages: msgs };
+      });
 
       setLoading(false);
 
@@ -256,7 +330,7 @@ export function useAdoptionConversation({ initial, onCreated, onChange }: UseAdo
           .insert({
             meta: { ...EMPTY_META, flow },
             grid_state: EMPTY_GRID,
-            messages: [{ role: 'assistant', content: INITIAL_MESSAGE }],
+            messages: [],
           })
           .select()
           .single();
@@ -411,7 +485,14 @@ export function useAdoptionConversation({ initial, onCreated, onChange }: UseAdo
             setPendingAttachments((s) =>
               s.map((a) => (a.id === attachmentId ? { ...a, state: 'ready', kind: 'text', text } : a))
             );
-            void extractInsightsForAttachment(text, flow);
+            // Only pre-seed the grid for an upload into an already-open
+            // conversation. On the welcome screen (no row yet), this used to
+            // eagerly create the row and flip the UI straight into the chat
+            // view before the user had actually sent anything — the file's
+            // text still reaches the model normally as part of the real
+            // first message once they press Start, so nothing is lost by
+            // waiting.
+            if (conversationRef.current) void extractInsightsForAttachment(text, flow);
           }
         } catch (err) {
           setPendingAttachments((s) =>
