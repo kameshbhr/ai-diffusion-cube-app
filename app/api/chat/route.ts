@@ -92,7 +92,17 @@ export async function POST(req: Request) {
 
   const stream = await anthropic.messages.stream({
     model: 'claude-sonnet-4-6',
-    max_tokens: mode === 'companion' ? 2048 : mode === 'extract-insights' ? 1024 : mode === 'pathway-draft' ? 6144 : 4096,
+    // companion used to be a short conversational turn every time (2048 was
+    // plenty), but the Explorer flow's Step 5 now generates a full Deep Dive
+    // Report / Holistic Adoption Plan inline within this same mode (wrapped
+    // in <deliverable> tags — see explorerSystemPrompt) instead of a
+    // separate document-generation mode. A real document plus the trailing
+    // <grid_update> JSON can easily exceed 2048 tokens, silently truncating
+    // mid-document — the closing </deliverable> tag never arrives, so the
+    // client can't extract it and falls back to showing raw text. 8192
+    // comfortably covers a full report; ordinary short replies are
+    // unaffected since this is a ceiling, not a target.
+    max_tokens: mode === 'companion' ? 8192 : mode === 'extract-insights' ? 1024 : mode === 'pathway-draft' ? 6144 : 4096,
     system: systemPrompt,
     messages,
   });
